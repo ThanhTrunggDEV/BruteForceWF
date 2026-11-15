@@ -1,5 +1,11 @@
 # BruteForceWF — audit mật khẩu WiFi của chính bạn
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
+[![hashcat](https://img.shields.io/badge/hashcat-%E2%89%A56.2-red.svg)](https://hashcat.net/hashcat/)
+
+*Offline WPA/WPA2 password audit toolkit: PMKID/handshake capture + hashcat 22000 orchestrator, with Vietnamese wordlists.*
+
 > **Chỉ dùng cho mạng bạn sở hữu hoặc có uỷ quyền bằng văn bản.** Truy cập WiFi của người khác là vi phạm pháp luật (VN: Điều 289 Bộ luật Hình sự). Script này để tự kiểm tra mật khẩu nhà mình có yếu không.
 
 ## Cách hoạt động
@@ -184,3 +190,7 @@ Kết quả lưu trong `cracked.potfile`, in ra dạng:
 - hcxdumptool manpage: <https://manpages.debian.org/testing/hcxdumptool/hcxdumptool.1.en.html>
 - hcxtools/hcxdumptool (ZerBea): <https://github.com/ZerBea/hcxtools>
 - rockyou wordlist (SecLists): <https://github.com/danielmiessler/SecLists>
+
+## License
+
+[MIT](LICENSE) © 2026 Nguyễn Thành Trung — dùng, sửa, phân phối tự do, kèm điều kiện giữ nguyên copyright notice. Phần wordlist (`vn-wifi.txt`, `dates.txt`, `vn-names.txt`) lấy từ nguồn công khai bên thứ ba, tuân theo license của nguồn gốc; **chỉ dùng để audit thiết bị của chính bạn**.
