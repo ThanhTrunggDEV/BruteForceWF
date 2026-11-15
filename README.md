@@ -94,7 +94,7 @@ python crack.py capture.hc22000 --wordlist C:\lists\custom.txt --mask-lens 8,9
 | `vn-base.txt` | từ gốc ngắn, dùng cho rules/hybrid |
 | `personal.txt` | sinh bằng `gen_wordlist.py` từ thông tin của chính bạn — hiệu quả nhất; tự động được dùng nếu tồn tại |
 
-Tải 3 list đầu (một lệnh, tự lọc + dedupe):
+3 list đầu đã có sẵn trong repo. Chạy lại script khi muốn cập nhật từ nguồn (tự lọc + dedupe):
 
 ```powershell
 python fetch_wordlists.py
