@@ -13,6 +13,8 @@ import sys
 import time
 from pathlib import Path
 
+import ui
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -60,7 +62,7 @@ def find_tool(name, explicit=None):
         path = Path(explicit).expanduser()
         if path.is_file():
             return str(path)
-        sys.exit(f"[x] không thấy {name} tại {path}")
+        ui.fail(f"không thấy {name} tại {path}")
     exe = name + (".exe" if os.name == "nt" else "")
     for candidate in (name, exe):
         found = shutil.which(candidate)
@@ -88,27 +90,27 @@ def prepare_hashfile(capture, hcxpcapngtool, dry_run):
         hashfile = capture.with_suffix(".hc22000")
         tool = hcxpcapngtool or ("<hcxpcapngtool>" if dry_run else None)
         if not tool:
-            sys.exit(
-                "[x] cần hcxpcapngtool để convert capture → .hc22000\n"
+            ui.fail(
+                "cần hcxpcapngtool để convert capture → .hc22000\n"
                 "    Tải hcxtools win64 (GitHub ZerBea/hcxtools), thêm vào PATH hoặc dùng --hcxpcapngtool <path>"
             )
-        print(f"[*] convert {capture.name} → {hashfile.name}")
+        ui.info(f"convert {capture.name} → {hashfile.name}")
         if not dry_run:
             if hashfile.exists():
                 hashfile.unlink()
             subprocess.run([tool, "-o", str(hashfile), str(capture)], check=False)
     else:
-        sys.exit(f"[x] định dạng không hỗ trợ: {ext} (cần .pcapng/.pcap/.cap hoặc .hc22000)")
+        ui.fail(f"định dạng không hỗ trợ: {ext} (cần .pcapng/.pcap/.cap hoặc .hc22000)")
 
     if dry_run and not hashfile.exists():
         return hashfile, []
     if not hashfile.exists():
-        sys.exit(f"[x] không tạo được {hashfile}")
+        ui.fail(f"không tạo được {hashfile}")
 
     lines = [l.strip() for l in hashfile.read_text(encoding="utf-8", errors="replace").splitlines()]
     valid = [l for l in lines if l.startswith(("WPA*01*", "WPA*02*", "WPA*03*", "WPA*04*"))]
     if not valid and not dry_run:
-        sys.exit("[x] file không có handshake/PMKID hợp lệ (WPA*01..04)")
+        ui.fail("file không có handshake/PMKID hợp lệ (WPA*01..04)")
     return hashfile, valid
 
 
@@ -134,16 +136,14 @@ def print_results(found, hash_lines):
         parts = line.split("*")
         if len(parts) > 5:
             essids[line] = decode_essid(parts[5])
-    print(f"\n[+] ĐÃ BẺ ĐƯỢC {len(found)}/{len(set(hash_lines))} hash")
-    for digest, plaintext in found.items():
-        print(f"    SSID: {essids.get(digest, '?')}  |  pass: {plaintext}")
+    ui.results(found, essids, len(set(hash_lines)))
 
 
 def resolve_wordlists(explicit):
     if explicit:
         path = Path(explicit).expanduser()
         if not path.is_file():
-            sys.exit(f"[x] không thấy wordlist: {path}")
+            ui.fail(f"không thấy wordlist: {path}")
         return [path]
     lists = []
     for name in DEFAULT_LIST_NAMES:
@@ -199,19 +199,19 @@ def build_stages(hashfile, wordlists, mask_lens, deep, rules_path, phone):
 
 
 def run_stage(hashcat, label, args, hashfile, hash_lines):
-    print(f"\n[*] {label}")
-    print("    $ " + " ".join([hashcat] + args))
+    ui.rule(label)
+    ui.command(" ".join([hashcat] + args))
     start = time.time()
     rc = None
     try:
         rc = subprocess.run([hashcat] + args).returncode
     except KeyboardInterrupt:
-        print("\n[!] dừng giữa chừng — vẫn kiểm tra kết quả đã crack")
+        ui.warn("dừng giữa chừng — vẫn kiểm tra kết quả đã crack")
     elapsed = time.time() - start
     if rc not in (None, 0, 1):
-        print(f"[!] hashcat exit code {rc} (2 = lỗi thiết lập/bị abort)")
+        ui.warn(f"hashcat exit code {rc} (2 = lỗi thiết lập/bị abort)")
     found = show_cracked(hashcat, hashfile, set(hash_lines))
-    print(f"    {elapsed:.0f}s — crack được {len(found)}/{len(set(hash_lines))}")
+    ui.stage(f"{elapsed:.0f}s — crack được {len(found)}/{len(set(hash_lines))}", bool(found))
     return found
 
 
@@ -236,8 +236,8 @@ def main():
 
     hashcat = find_tool("hashcat", args.hashcat) or ("<hashcat>" if args.dry_run else None)
     if not hashcat:
-        sys.exit(
-            "[x] không thấy hashcat.\n"
+        ui.fail(
+            "không thấy hashcat.\n"
             "    Tải bản Windows tại https://hashcat.net/hashcat/, giải nén (vd C:\\hashcat)\n"
             "    rồi thêm vào PATH hoặc chạy với --hashcat C:\\hashcat\\hashcat.exe"
         )
@@ -250,14 +250,14 @@ def main():
         decode_essid(line.split("*")[5]) for line in hash_lines if len(line.split("*")) > 5
     }
     if unique_essids:
-        print(f"[*] hash file: {len(known_hashes)} hash, SSID: {', '.join(sorted(unique_essids))}")
+        ui.info(f"hash file: {len(known_hashes)} hash, SSID: {', '.join(sorted(unique_essids))}")
 
     if args.show_only:
         found = show_cracked(hashcat, hashfile, known_hashes)
         if found:
             print_results(found, hash_lines)
         else:
-            print("[-] chưa có kết quả trong potfile")
+            ui.warn("chưa có kết quả trong potfile")
         return
 
     rules_file = None
@@ -271,7 +271,7 @@ def main():
             if rules_file:
                 break
         if not rules_file:
-            print("[!] không thấy best66/best64.rule — bỏ qua giai đoạn rules")
+            ui.warn("không thấy best66/best64.rule — bỏ qua giai đoạn rules")
 
     mask_lens = []
     for chunk in args.mask_lens.split(","):
@@ -279,36 +279,36 @@ def main():
         if not chunk:
             continue
         if not chunk.isdigit() or not 8 <= int(chunk) <= 12:
-            sys.exit(f"[x] --mask-lens không hợp lệ: {chunk} (WPA tối thiểu 8 ký tự, mask số hỗ trợ 8-12)")
+            ui.fail(f"--mask-lens không hợp lệ: {chunk} (WPA tối thiểu 8 ký tự, mask số hỗ trợ 8-12)")
         mask_lens.append(int(chunk))
 
     wordlists = resolve_wordlists(args.wordlist)
     if not wordlists:
-        sys.exit("[x] không có wordlist nào (tạo wordlists/vn-common.txt hoặc dùng --wordlist)")
+        ui.fail("không có wordlist nào (tạo wordlists/vn-common.txt hoặc dùng --wordlist)")
 
     stages = build_stages(hashfile, wordlists, mask_lens, args.deep, rules_file, args.phone)
 
     if args.dry_run:
-        print("\n[*] kế hoạch tấn công:")
-        for label, cmd in stages:
-            print(f"    - {label}")
-            print("      $ " + " ".join([hashcat] + cmd))
+        ui.info("kế hoạch tấn công:")
+        ui.plan(stages, hashcat)
         return
 
-    print(f"[*] hashcat: {hashcat}")
-    print(f"[*] wordlists: {', '.join(wl.name for wl in wordlists)}")
+    ui.info(f"hashcat: {hashcat}")
+    ui.info(f"wordlists: {', '.join(wl.name for wl in wordlists)}")
+    ui.info(f"{len(stages)} giai đoạn — dừng ngay khi crack được")
 
     found = {}
-    for label, cmd in stages:
+    total = len(stages)
+    for index, (label, cmd) in enumerate(stages, 1):
         if len(found) == len(known_hashes):
             break
-        found = run_stage(hashcat, label, cmd, hashfile, hash_lines)
+        found = run_stage(hashcat, f"[{index}/{total}] {label}", cmd, hashfile, hash_lines)
 
     if found:
         print_results(found, hash_lines)
     else:
-        print("\n[-] chưa crack được. Gợi ý: chạy --deep, thêm --mask-lens 9, hoặc dùng wordlist lớn hơn.")
-        print("    SSID/mật khẩu mục tiêu nằm ngoài các mẫu đã thử — không phải lúc nào cũng bẻ được.")
+        ui.warn("chưa crack được. Gợi ý: chạy --deep, thêm --mask-lens 9, hoặc dùng wordlist lớn hơn.")
+        ui.info("SSID/mật khẩu mục tiêu nằm ngoài các mẫu đã thử — không phải lúc nào cũng bẻ được.")
 
 
 if __name__ == "__main__":

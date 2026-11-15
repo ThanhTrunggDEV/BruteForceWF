@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import ui
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
@@ -57,7 +59,7 @@ def check_tools():
             missing.setdefault(package, []).append(tool)
     if missing:
         for package, tools in sorted(missing.items()):
-            print(f"[x] thiếu {', '.join(tools)} — cài: sudo pacman -S {package}")
+            ui.error(f"thiếu {', '.join(tools)} — cài: sudo pacman -S {package}")
         sys.exit(1)
 
 
@@ -71,8 +73,10 @@ def check_hashcat_backend():
     output = result.stdout + result.stderr
     if result.returncode == 0 and ("Backend Device ID" in output or "CUDA Info:" in output):
         return True
-    print("[x] hashcat không thấy backend OpenCL/CUDA — kiểm tra driver GPU.")
-    print("    Chạy `hashcat -I` để xem chi tiết (vd: sudo pacman -S opencl-nvidia).")
+    ui.error(
+        "hashcat không thấy backend OpenCL/CUDA — kiểm tra driver GPU.\n"
+        "    Chạy `hashcat -I` để xem chi tiết (vd: sudo pacman -S opencl-nvidia)."
+    )
     return False
 
 
@@ -116,14 +120,14 @@ def restore_iface(iface, protected=()):
         candidates = [name for name in monitors if name not in protected]
         if len(candidates) == 1:
             only = candidates[0]
-            print(f"[!] không thấy {iface}, đưa {only} về managed mode")
+            ui.warn(f"không thấy {iface}, đưa {only} về managed mode")
             subprocess.run(["ip", "link", "set", only, "down"], check=False)
             subprocess.run(["iw", "dev", only, "set", "type", "managed"], check=False)
             subprocess.run(["ip", "link", "set", only, "up"], check=False)
         elif candidates:
-            print(f"[!] không thấy {iface}, còn monitor iface: {', '.join(candidates)} — kiểm tra `iw dev`")
+            ui.warn(f"không thấy {iface}, còn monitor iface: {', '.join(candidates)} — kiểm tra `iw dev`")
         elif monitors:
-            print(f"[!] không thấy {iface}; giữ nguyên monitor iface có sẵn: {', '.join(monitors)}")
+            ui.warn(f"không thấy {iface}; giữ nguyên monitor iface có sẵn: {', '.join(monitors)}")
         return
     for name in monitors:
         if name == iface or name in protected:
@@ -131,7 +135,7 @@ def restore_iface(iface, protected=()):
         subprocess.run(["ip", "link", "set", name, "down"], check=False)
         subprocess.run(["iw", "dev", name, "del"], check=False)
     if interfaces[iface] == "monitor":
-        print(f"[*] đưa {iface} về managed mode")
+        ui.info(f"đưa {iface} về managed mode")
         subprocess.run(["ip", "link", "set", iface, "down"], check=False)
         subprocess.run(["iw", "dev", iface, "set", "type", "managed"], check=False)
     subprocess.run(["ip", "link", "set", iface, "up"], check=False)
@@ -186,24 +190,11 @@ def scan():
     return aps
 
 
-def display(aps):
-    print(f"\n{'STT':>3}  {'':2} {'SSID':<28} {'BSSID':<17} {'KÊNH':>4} {'BAND':>4} {'SIGNAL':>6}  BẢO MẬT")
-    print("-" * 94)
-    for index, ap in enumerate(aps, 1):
-        mark = "*" if ap["in_use"] else " "
-        print(
-            f"{index:>3}  {mark:2} {ap['ssid'][:28]:<28} {ap['bssid']:<17} "
-            f"{ap['chan']:>4} {ap['band']:>4} {ap['signal']:>5}%  {ap['security']}"
-        )
-    print("-" * 94)
-    print("(* = mạng máy đang kết nối)")
-
-
 def choose(aps):
-    display(aps)
+    ui.scan_table(aps)
     while True:
         try:
-            choice = input("\nChọn STT mục tiêu (r = quét lại, q = thoát): ").strip().lower()
+            choice = ui.ask("\nChọn STT mục tiêu (r = quét lại, q = thoát): ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             sys.exit("\n[*] huỷ")
         if choice in ("q", "quit"):
@@ -212,21 +203,21 @@ def choose(aps):
             aps = scan()
             if not aps:
                 sys.exit("[x] không quét được mạng nào")
-            display(aps)
+            ui.scan_table(aps)
             continue
         if not choice.isdigit() or not 1 <= int(choice) <= len(aps):
-            print("[!] STT không hợp lệ")
+            ui.warn("STT không hợp lệ")
             continue
         ap = aps[int(choice) - 1]
         security = ap["security"].upper()
         if "WEP" in security or security in ("", "OPEN"):
-            print("[!] chỉ hỗ trợ WPA/WPA2 — mạng này mở hoặc dùng WEP.")
+            ui.warn("chỉ hỗ trợ WPA/WPA2 — mạng này mở hoặc dùng WEP.")
             continue
         if "802.1X" in security:
-            print("[!] mạng WPA-Enterprise (802.1X) — không crack được bằng mode 22000.")
+            ui.warn("mạng WPA-Enterprise (802.1X) — không crack được bằng mode 22000.")
             continue
         if "WPA3" in security and "WPA2" not in security:
-            print("[!] mạng WPA3-only (SAE) — không crack được bằng mode 22000.")
+            ui.warn("mạng WPA3-only (SAE) — không crack được bằng mode 22000.")
             continue
         return ap
 
@@ -269,11 +260,11 @@ def capture(ap, iface, pmkid_minutes, hs_seconds, protected):
         os.chmod(CAPTURES, 0o700)
     except OSError:
         pass
-    print(f"\n[*] mục tiêu: {ap['ssid']} | {ap['bssid']} | kênh {ap['chan']}")
-    print("[!] WiFi của máy sẽ ngắt tạm thời trong lúc capture, tự bật lại sau.")
+    ui.rule(f"mục tiêu: {ap['ssid']} | {ap['bssid']} | kênh {ap['chan']}")
+    ui.warn("WiFi của máy sẽ ngắt tạm thời trong lúc capture, tự bật lại sau.")
     before = snapshot_hashes()
 
-    print("\n[1/2] capture PMKID + EAPOL bằng hcxdumptool (một phiên)...")
+    ui.rule("[1/2] capture PMKID + EAPOL bằng hcxdumptool (một phiên)")
     pmkid_chan = ap["chan"]
     suffix = {"2.4": "a", "5": "b", "6": "c"}.get(ap["band"])
     if suffix and pmkid_chan.isdigit():
@@ -292,7 +283,7 @@ def capture(ap, iface, pmkid_minutes, hs_seconds, protected):
         return target, raws
 
     restore_iface(iface, protected)
-    print("\n[2/2] chưa có hash đúng mục tiêu — fallback handshake bằng airodump (cần client reconnect)...")
+    ui.rule("[2/2] chưa có hash đúng mục tiêu — fallback handshake bằng airodump (cần client reconnect)")
     subprocess.run(
         [
             "bash", str(ROOT / "capture" / "handshake.sh"),
@@ -322,7 +313,7 @@ def nm_active():
 def restore_network(was_active):
     if not was_active or nm_active():
         return
-    print("[*] bật lại NetworkManager")
+    ui.info("bật lại NetworkManager")
     subprocess.run(["systemctl", "start", "NetworkManager"], check=False)
 
 
@@ -354,7 +345,7 @@ def crack(hashfile, args):
         cmd.append("--phone")
     if args.deep:
         cmd.append("--deep")
-    print(f"\n[*] crack {hashfile.name}")
+    ui.rule(f"crack {hashfile.name}")
     subprocess.run(cmd, cwd=ROOT, check=False)
 
 
@@ -373,22 +364,22 @@ def main():
     args = parser.parse_args()
 
     if os.geteuid() != 0:
-        sys.exit("[x] cần quyền root để quét/capture: sudo python3 audit.py")
+        ui.fail("cần quyền root để quét/capture: sudo python3 audit.py")
 
     if args.pmkid_minutes < 1:
-        sys.exit("[x] --pmkid-minutes phải >= 1")
+        ui.fail("--pmkid-minutes phải >= 1")
     if args.hs_seconds < 1:
-        sys.exit("[x] --hs-seconds phải >= 1")
+        ui.fail("--hs-seconds phải >= 1")
     for chunk in args.mask_lens.split(","):
         chunk = chunk.strip()
         if not chunk:
             continue
         if not chunk.isdigit() or not 8 <= int(chunk) <= 12:
-            sys.exit(f"[x] --mask-lens không hợp lệ: {chunk} (mask số hỗ trợ 8-12)")
+            ui.fail(f"--mask-lens không hợp lệ: {chunk} (mask số hỗ trợ 8-12)")
     if args.wordlist:
         wordlist = Path(args.wordlist).expanduser().resolve()
         if not wordlist.is_file():
-            sys.exit(f"[x] không thấy wordlist: {wordlist}")
+            ui.fail(f"không thấy wordlist: {wordlist}")
         args.wordlist = str(wordlist)
 
     os.umask(0o077)
@@ -399,18 +390,18 @@ def main():
     nm_was_active = nm_active()
     iface = args.iface or detect_iface()
     if not iface:
-        sys.exit("[x] không thấy card WiFi managed — kiểm tra `iw dev` hoặc dùng --iface")
+        ui.fail("không thấy card WiFi managed — kiểm tra `iw dev` hoặc dùng --iface")
 
-    print(f"[*] card WiFi: {iface}")
-    print("[!] chỉ dùng cho mạng bạn sở hữu hoặc có uỷ quyền bằng văn bản.")
+    ui.info(f"card WiFi: {iface}")
+    ui.warn("chỉ dùng cho mạng bạn sở hữu hoặc có uỷ quyền bằng văn bản.")
     aps = scan()
     if not aps:
-        sys.exit("[x] không quét được mạng nào")
+        ui.fail("không quét được mạng nào")
     ap = choose(aps)
 
     if not args.yes:
         try:
-            answer = input(
+            answer = ui.ask(
                 f"[?] Xác nhận '{ap['ssid']}' ({ap['bssid']}) thuộc quyền sở hữu/uỷ quyền của bạn [y/N]: "
             ).strip().lower()
         except (EOFError, KeyboardInterrupt):
@@ -429,11 +420,11 @@ def main():
     if not hashfile:
         if raws:
             names = ", ".join(path.name for path in raws)
-            print(f"\n[-] file {names} không chứa hash của {ap['bssid']} — không crack để tránh đụng mạng khác.")
+            ui.warn(f"file {names} không chứa hash của {ap['bssid']} — không crack để tránh đụng mạng khác.")
             for raw in raws:
-                print(f"    Giữ lại để kiểm tra: {raw}")
+                ui.info(f"giữ lại để kiểm tra: {raw}")
         else:
-            print("\n[-] không bắt được PMKID/handshake. Gợi ý: đứng gần AP hơn, thử kênh khác, hoặc chờ client reconnect.")
+            ui.warn("không bắt được PMKID/handshake. Gợi ý: đứng gần AP hơn, thử kênh khác, hoặc chờ client reconnect.")
         return
 
     try:

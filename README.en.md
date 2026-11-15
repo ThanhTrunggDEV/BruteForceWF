@@ -35,6 +35,7 @@
 - **Multi-stage hashcat orchestration** — dictionary, rules, numeric masks and hybrid attacks, stopping as soon as the password is recovered.
 - **Vietnamese wordlists** — 405k real WiFi passwords, birthdays, given names and common passwords.
 - **Personalized wordlists** — `gen_wordlist.py` generates mutations from your own names, phone numbers and birthdays.
+- **Friendly terminal UI** — AP scan table, attack plan and result panel when [`rich`](https://github.com/Textualize/rich) is installed (optional; falls back to plain text automatically).
 - **Cross-platform** — capture on any Linux distribution; crack on Windows or Linux.
 
 ## How it works
@@ -69,6 +70,16 @@ sudo apt install aircrack-ng hcxdumptool hcxtools
 # Arch Linux
 sudo pacman -S aircrack-ng hcxdumptool hcxtools iw
 ```
+
+Optional — a richer terminal UI with `rich` (colored tables, result panel, stage separators). Not required: without `rich`, everything falls back to plain text.
+
+```bash
+sudo pacman -S python-rich        # Arch
+sudo apt install python3-rich     # Ubuntu / Debian
+# or: python3 -m pip install rich
+```
+
+> `audit.py` runs under `sudo`, so install `rich` for the system environment (as shown above) rather than with `pip --user`.
 
 > Kali is not required — a Kali/live USB is only convenient because the tools and drivers come preinstalled. Intel cards (AX200/AX210) can do monitor mode but injection is poor: passive handshake capture works, while deauth/PMKID attacks are better served by MediaTek/Ralink/Atheros cards (e.g. Alfa).
 
@@ -241,6 +252,7 @@ BruteForceWF/
 ├── crack.py              # hashcat mode 22000 orchestrator
 ├── gen_wordlist.py       # Personalized wordlist generator
 ├── fetch_wordlists.py    # Download + filter wordlists from public sources
+├── ui.py                 # Rich UI (optional) + plain-text fallback
 ├── capture/
 │   ├── pmkid.sh          # PMKID + EAPOL capture (hcxdumptool)
 │   └── handshake.sh      # Handshake fallback (airodump-ng)

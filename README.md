@@ -35,6 +35,7 @@
 - **Điều phối hashcat nhiều tầng** — dictionary, rules, mask số và hybrid, dừng ngay khi bẻ được mật khẩu.
 - **Wordlist tiếng Việt** — 405 nghìn mật khẩu WiFi thực tế, ngày sinh, tên riêng và mật khẩu phổ biến.
 - **Wordlist cá nhân hoá** — `gen_wordlist.py` sinh biến thể từ tên, số điện thoại, ngày sinh của chính bạn.
+- **Giao diện terminal thân thiện** — bảng quét AP, kế hoạch tấn công và panel kết quả khi cài [`rich`](https://github.com/Textualize/rich) (tuỳ chọn, tự fallback plain text nếu thiếu).
 - **Đa nền tảng** — capture trên mọi bản Linux; crack trên Windows hoặc Linux.
 
 ## Cách hoạt động
@@ -69,6 +70,16 @@ sudo apt install aircrack-ng hcxdumptool hcxtools
 # Arch Linux
 sudo pacman -S aircrack-ng hcxdumptool hcxtools iw
 ```
+
+Tuỳ chọn — giao diện đẹp hơn với `rich` (bảng màu, panel kết quả, rule phân cách giai đoạn). Không bắt buộc: thiếu `rich`, công cụ tự động dùng plain text.
+
+```bash
+sudo pacman -S python-rich        # Arch
+sudo apt install python3-rich     # Ubuntu / Debian
+# hoặc: python3 -m pip install rich
+```
+
+> `audit.py` chạy bằng `sudo`, nên cài `rich` cho môi trường hệ thống (như trên) thay vì `pip --user`.
 
 > Không cần Kali — Kali/live USB chỉ tiện vì có sẵn công cụ và driver. Card Intel (AX200/AX210) có thể monitor mode nhưng khả năng injection kém: vẫn bắt handshake thụ động được, còn deauth/PMKID nên dùng card MediaTek/Ralink/Atheros (ví dụ Alfa).
 
@@ -241,6 +252,7 @@ BruteForceWF/
 ├── crack.py              # Orchestrator hashcat mode 22000
 ├── gen_wordlist.py       # Sinh wordlist cá nhân hoá
 ├── fetch_wordlists.py    # Tải + lọc wordlist từ nguồn công khai
+├── ui.py                 # Hiển thị Rich (tuỳ chọn) + fallback plain text
 ├── capture/
 │   ├── pmkid.sh          # Capture PMKID + EAPOL (hcxdumptool)
 │   └── handshake.sh      # Fallback handshake (airodump-ng)
