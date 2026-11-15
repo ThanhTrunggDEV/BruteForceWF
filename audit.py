@@ -61,6 +61,21 @@ def check_tools():
         sys.exit(1)
 
 
+def check_hashcat_backend():
+    result = subprocess.run(
+        ["hashcat", "-I"],
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    output = result.stdout + result.stderr
+    if result.returncode == 0 and ("Backend Device ID" in output or "CUDA Info:" in output):
+        return True
+    print("[x] hashcat không thấy backend OpenCL/CUDA — kiểm tra driver GPU.")
+    print("    Chạy `hashcat -I` để xem chi tiết (vd: sudo pacman -S opencl-nvidia).")
+    return False
+
+
 def detect_iface():
     result = subprocess.run(["iw", "dev"], capture_output=True, text=True)
     current = None
@@ -77,12 +92,57 @@ def detect_iface():
     return None
 
 
+def list_ifaces():
+    result = subprocess.run(["iw", "dev"], capture_output=True, text=True)
+    interfaces, current = {}, None
+    for raw in result.stdout.splitlines():
+        line = raw.strip()
+        if line.startswith("Interface "):
+            current = line.split(maxsplit=1)[1]
+            interfaces[current] = "unknown"
+        elif line.startswith("Unnamed"):
+            current = None
+        elif line.startswith("type ") and current:
+            interfaces[current] = line.split()[1]
+            current = None
+    return interfaces
+
+
+def restore_iface(iface, protected=()):
+    interfaces = list_ifaces()
+    monitors = [name for name, kind in interfaces.items() if kind == "monitor"]
+    protected = set(protected)
+    if iface not in interfaces:
+        candidates = [name for name in monitors if name not in protected]
+        if len(candidates) == 1:
+            only = candidates[0]
+            print(f"[!] không thấy {iface}, đưa {only} về managed mode")
+            subprocess.run(["ip", "link", "set", only, "down"], check=False)
+            subprocess.run(["iw", "dev", only, "set", "type", "managed"], check=False)
+            subprocess.run(["ip", "link", "set", only, "up"], check=False)
+        elif candidates:
+            print(f"[!] không thấy {iface}, còn monitor iface: {', '.join(candidates)} — kiểm tra `iw dev`")
+        elif monitors:
+            print(f"[!] không thấy {iface}; giữ nguyên monitor iface có sẵn: {', '.join(monitors)}")
+        return
+    for name in monitors:
+        if name == iface or name in protected:
+            continue
+        subprocess.run(["ip", "link", "set", name, "down"], check=False)
+        subprocess.run(["iw", "dev", name, "del"], check=False)
+    if interfaces[iface] == "monitor":
+        print(f"[*] đưa {iface} về managed mode")
+        subprocess.run(["ip", "link", "set", iface, "down"], check=False)
+        subprocess.run(["iw", "dev", iface, "set", "type", "managed"], check=False)
+    subprocess.run(["ip", "link", "set", iface, "up"], check=False)
+
+
 def scan():
     cmd = [
         "nmcli", "-t", "-f", ",".join(SCAN_FIELDS),
         "dev", "wifi", "list", "--rescan", "yes",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
     if result.returncode != 0:
         sys.exit(f"[x] quét WiFi thất bại: {result.stderr.strip() or 'nmcli lỗi'}")
     aps, seen = [], set()
@@ -175,76 +235,95 @@ def snapshot_hashes():
     return {path for path in CAPTURES.glob("*.hc22000") if not path.name.endswith("-target.hc22000")}
 
 
-def new_hash(before):
+def new_hashes(before):
     candidates = [
         path for path in CAPTURES.glob("*.hc22000")
         if path not in before
         and not path.name.endswith("-target.hc22000")
         and path.stat().st_size > 0
     ]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda path: path.stat().st_mtime)
+    return sorted(candidates, key=lambda path: path.stat().st_mtime, reverse=True)
 
 
-def filter_hash(hashfile, bssid):
-    if hashfile is None:
+def filter_hash(hashfiles, bssid):
+    if not hashfiles:
         return None
     target = bssid.replace(":", "").lower()
     kept = []
-    for line in hashfile.read_text(encoding="utf-8", errors="replace").splitlines():
-        parts = line.split("*")
-        if len(parts) > 3 and parts[0] == "WPA" and parts[3].lower() == target:
-            kept.append(line)
+    for hashfile in hashfiles:
+        for line in hashfile.read_text(encoding="utf-8", errors="replace").splitlines():
+            parts = line.split("*")
+            if len(parts) > 3 and parts[0] == "WPA" and parts[3].lower() == target:
+                kept.append(line)
     if not kept:
         return None
-    output = hashfile.with_name(f"{hashfile.stem}-target.hc22000")
+    base = hashfiles[0]
+    output = base.with_name(f"{base.stem}-target.hc22000")
     output.write_text("\n".join(kept) + "\n", encoding="utf-8", newline="\n")
     return output
 
 
-def capture(ap, iface, pmkid_minutes, hs_seconds):
+def capture(ap, iface, pmkid_minutes, hs_seconds, protected):
     CAPTURES.mkdir(exist_ok=True)
+    try:
+        os.chmod(CAPTURES, 0o700)
+    except OSError:
+        pass
     print(f"\n[*] mục tiêu: {ap['ssid']} | {ap['bssid']} | kênh {ap['chan']}")
     print("[!] WiFi của máy sẽ ngắt tạm thời trong lúc capture, tự bật lại sau.")
     before = snapshot_hashes()
 
     print("\n[1/2] thử PMKID (không cần client đang kết nối)...")
+    pmkid_chan = ap["chan"]
+    suffix = {"2.4": "a", "5": "b", "6": "c"}.get(ap["band"])
+    if suffix and pmkid_chan.isdigit():
+        pmkid_chan += suffix
     subprocess.run(
-        ["bash", str(ROOT / "capture" / "pmkid.sh"), iface, str(pmkid_minutes), ap["chan"]],
+        [
+            "bash", str(ROOT / "capture" / "pmkid.sh"),
+            iface, str(pmkid_minutes), pmkid_chan, ap["bssid"],
+        ],
         cwd=ROOT,
         check=False,
     )
-    raw = new_hash(before)
-    target = filter_hash(raw, ap["bssid"])
+    raws = new_hashes(before)
+    target = filter_hash(raws, ap["bssid"])
     if target:
-        return target, raw
+        return target, raws
 
+    restore_iface(iface, protected)
     print("\n[2/2] chưa có PMKID đúng mục tiêu — bắt handshake (cần client reconnect)...")
     subprocess.run(
         [
             "bash", str(ROOT / "capture" / "handshake.sh"),
             iface, ap["bssid"], ap["chan"], "", str(hs_seconds),
+            ap["band"] if ap["band"] in ("2.4", "5", "6") else "",
         ],
         cwd=ROOT,
         check=False,
     )
-    raw = new_hash(before) or raw
-    target = filter_hash(raw, ap["bssid"])
-    return target, raw
+    raws = new_hashes(before)
+    target = filter_hash(raws, ap["bssid"])
+    return target, raws
 
 
-def restore_network():
+def nm_active():
     if not shutil.which("systemctl"):
-        return
+        return False
     status = subprocess.run(
         ["systemctl", "is-active", "NetworkManager"],
         capture_output=True,
         text=True,
+        errors="replace",
     )
-    if status.stdout.strip() != "active":
-        print("[*] bật lại NetworkManager")
-        subprocess.run(["systemctl", "start", "NetworkManager"], check=False)
+    return status.stdout.strip() == "active"
+
+
+def restore_network(was_active):
+    if not was_active or nm_active():
+        return
+    print("[*] bật lại NetworkManager")
+    subprocess.run(["systemctl", "start", "NetworkManager"], check=False)
 
 
 def return_ownership():
@@ -296,8 +375,28 @@ def main():
     if os.geteuid() != 0:
         sys.exit("[x] cần quyền root để quét/capture: sudo python3 audit.py")
 
-    check_tools()
+    if args.pmkid_minutes < 1:
+        sys.exit("[x] --pmkid-minutes phải >= 1")
+    if args.hs_seconds < 1:
+        sys.exit("[x] --hs-seconds phải >= 1")
+    for chunk in args.mask_lens.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if not chunk.isdigit() or not 8 <= int(chunk) <= 12:
+            sys.exit(f"[x] --mask-lens không hợp lệ: {chunk} (mask số hỗ trợ 8-12)")
+    if args.wordlist:
+        wordlist = Path(args.wordlist).expanduser().resolve()
+        if not wordlist.is_file():
+            sys.exit(f"[x] không thấy wordlist: {wordlist}")
+        args.wordlist = str(wordlist)
 
+    os.umask(0o077)
+    check_tools()
+    if not check_hashcat_backend():
+        sys.exit(1)
+
+    nm_was_active = nm_active()
     iface = args.iface or detect_iface()
     if not iface:
         sys.exit("[x] không thấy card WiFi managed — kiểm tra `iw dev` hoặc dùng --iface")
@@ -319,16 +418,20 @@ def main():
         if answer not in ("y", "yes", "có", "co"):
             sys.exit("[*] huỷ")
 
+    protected = {name for name, kind in list_ifaces().items() if kind == "monitor"}
     try:
-        hashfile, raw = capture(ap, iface, args.pmkid_minutes, args.hs_seconds)
+        hashfile, raws = capture(ap, iface, args.pmkid_minutes, args.hs_seconds, protected)
     finally:
-        restore_network()
+        restore_iface(iface, protected)
+        restore_network(nm_was_active)
         return_ownership()
 
     if not hashfile:
-        if raw:
-            print(f"\n[-] file {raw.name} không chứa hash của {ap['bssid']} — không crack để tránh đụng mạng khác.")
-            print(f"    File giữ lại để kiểm tra: {raw}")
+        if raws:
+            names = ", ".join(path.name for path in raws)
+            print(f"\n[-] file {names} không chứa hash của {ap['bssid']} — không crack để tránh đụng mạng khác.")
+            for raw in raws:
+                print(f"    Giữ lại để kiểm tra: {raw}")
         else:
             print("\n[-] không bắt được PMKID/handshake. Gợi ý: đứng gần AP hơn, thử kênh khác, hoặc chờ client reconnect.")
         return

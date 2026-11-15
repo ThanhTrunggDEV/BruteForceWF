@@ -20,6 +20,8 @@ Script quét toàn bộ AP xung quanh (SSID, BSSID, kênh, band, signal, bảo m
 
 Tuỳ chọn: `--iface wlo1`, `--pmkid-minutes 5`, `--hs-seconds 60`, `--mask-lens 8,9`, `--phone`, `--deep`, `--wordlist <file>`, `--yes` (bỏ xác nhận sở hữu mạng).
 
+Trước khi capture, script kiểm tra `hashcat -I` có backend OpenCL/CUDA, validate tham số và wordlist (đường dẫn tương đối được resolve theo thư mục hiện tại).
+
 ## Yêu cầu
 
 | Phần | Cần gì |
@@ -42,11 +44,14 @@ Ghi lại BSSID + kênh của AP nhà mày (ví dụ từ `iw dev` / router admi
 ```bash
 sudo ./capture/pmkid.sh wlan0 5        # quét 5 phút, mọi kênh
 sudo ./capture/pmkid.sh wlan0 5 6      # hoặc chỉ định kênh
+sudo ./capture/pmkid.sh wlan0 5 6c     # 6GHz: kênh + band c (a=2.4, b=5, c=6)
+sudo ./capture/pmkid.sh wlan0 5 6 AA:BB:CC:DD:EE:FF   # chỉ AP mục tiêu (khuyến nghị)
 ```
 
 - Không cần client đang kết nối, nhưng **chỉ ăn với AP còn dính lỗi PMKID** (nhiều router ISP cũ).
-- Kết quả: `captures/pmkid-*.pcapng` + `.hc22000` (tự convert nếu có `hcxpcapngtool`).
-- Script tự thích ứng hcxdumptool 6/7/8: v7+ tự thêm hậu tố band (`40` → `40b`), v8 tự dùng `-w`/`--rds` thay `-o`/`--enable_status`.
+- Kết quả: `captures/pmkid-*.pcapng` + `.hc22000` (tự convert nếu có `hcxpcapngtool`); file `600`, thư mục `captures/` `700`.
+- Truyền BSSID để chỉ capture AP mục tiêu (BPF `wlan addr3`, tự thoát khi có EAPOL) — tránh lẫn hash hàng xóm.
+- Script tự thích ứng hcxdumptool: từ **6.3** dùng `-w`/`--rds` và `-c` kèm hậu tố band (`40` → `40b`, 6GHz dùng `c`); bản cũ hơn dùng `-o`/`--enable_status`.
 
 ### Cách B — Handshake (cần client đang/ sắp kết nối)
 
@@ -54,6 +59,8 @@ sudo ./capture/pmkid.sh wlan0 5 6      # hoặc chỉ định kênh
 sudo ./capture/handshake.sh wlan0 AA:BB:CC:DD:EE:FF 6
 # kèm MAC client để deauth đúng mục tiêu:
 sudo ./capture/handshake.sh wlan0 AA:BB:CC:DD:EE:FF 6 11:22:33:44:55:66 60
+# 6GHz: thêm band ở cuối (2.4 / 5 / 6):
+sudo ./capture/handshake.sh wlan0 AA:BB:CC:DD:EE:FF 5 "" 60 6
 ```
 
 - Script chạy `airodump-ng` + deauth ngắn để ép client reconnect (chỉ mạng của mày), tự dừng khi bắt được handshake.
@@ -167,6 +174,7 @@ Kết quả lưu trong `cracked.potfile`, in ra dạng:
 - Mật khẩu mạnh (dài, ngẫu nhiên) thì **không bẻ được** — đó chính là mục đích của audit: nếu script này ra pass nhanh, mật khẩu của mày đang yếu.
 - PMKID không bắt được ≠ AP an toàn; thử handshake. Handshake không bắt được thì kiểm tra kênh/BSSID/khoảng cách.
 - `--tot` của hcxdumptool tính bằng **phút**; Ctrl+C dừng sớm, file vẫn giữ.
+- Sau capture, script tự đưa card về **managed mode** (xoá iface monitor phụ như `wlo1mon` nếu có). `audit.py` còn tự bật lại NetworkManager; nếu chạy `capture/*.sh` riêng thì chạy `sudo systemctl start NetworkManager` để có mạng lại.
 - Tăng tốc: card rời gắn anten, đứng gần AP; crack thì GPU NVIDIA rời nhanh hơn CPU hàng chục lần.
 
 ## Nguồn tham khảo

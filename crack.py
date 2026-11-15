@@ -106,9 +106,9 @@ def prepare_hashfile(capture, hcxpcapngtool, dry_run):
         sys.exit(f"[x] không tạo được {hashfile}")
 
     lines = [l.strip() for l in hashfile.read_text(encoding="utf-8", errors="replace").splitlines()]
-    valid = [l for l in lines if l.startswith(("WPA*01*", "WPA*02*"))]
+    valid = [l for l in lines if l.startswith(("WPA*01*", "WPA*02*", "WPA*03*", "WPA*04*"))]
     if not valid and not dry_run:
-        sys.exit("[x] file không có handshake/PMKID hợp lệ (WPA*01/WPA*02)")
+        sys.exit("[x] file không có handshake/PMKID hợp lệ (WPA*01..04)")
     return hashfile, valid
 
 
