@@ -31,8 +31,24 @@ if command -v airmon-ng >/dev/null; then
   airmon-ng check kill >/dev/null 2>&1 || true
 fi
 
-ARGS=(-i "$IFACE" -o "$OUT" --tot="$MINUTES" --enable_status=1)
-[[ -n "$CHANNEL" ]] && ARGS+=(-c "$CHANNEL")
+HCX_VER="$(hcxdumptool -v 2>/dev/null | awk 'NR==1{print $2}')"
+HCX_MAJOR="${HCX_VER%%.*}"
+[[ "$HCX_MAJOR" =~ ^[0-9]+$ ]] || HCX_MAJOR=0
+
+# hcxdumptool 8 đổi -o → -w và --enable_status → --rds
+if (( HCX_MAJOR >= 8 )); then
+  ARGS=(-i "$IFACE" -w "$OUT" --tot="$MINUTES" --rds=1)
+else
+  ARGS=(-i "$IFACE" -o "$OUT" --tot="$MINUTES" --enable_status=1)
+fi
+
+if [[ -n "$CHANNEL" ]]; then
+  # từ v7, -c cần hậu tố band: a = 2.4GHz, b = 5GHz
+  if (( HCX_MAJOR >= 7 )) && [[ "$CHANNEL" =~ ^[0-9]+$ ]]; then
+    if (( CHANNEL <= 14 )); then CHANNEL+="a"; else CHANNEL+="b"; fi
+  fi
+  ARGS+=(-c "$CHANNEL")
+fi
 
 echo "[*] PMKID capture ${MINUTES} phút trên $IFACE${CHANNEL:+ (kênh $CHANNEL)}"
 echo "    Ctrl+C để dừng sớm — file vẫn được giữ."

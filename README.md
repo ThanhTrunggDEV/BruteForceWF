@@ -10,6 +10,16 @@ WPA2 **không thể** brute-force kiểu "thử từng mật khẩu online" — 
 2. **Convert** sang định dạng hash `22000`.
 3. **Crack offline** bằng hashcat trên GPU — thử hàng trăm nghìn mật khẩu/giây.
 
+## Quy trình nhanh — một lệnh
+
+```bash
+sudo python3 audit.py
+```
+
+Script quét toàn bộ AP xung quanh (SSID, BSSID, kênh, band, signal, bảo mật), cho chọn STT, rồi tự thử PMKID → handshake, lọc hash đúng BSSID mục tiêu và gọi `crack.py`. WiFi của máy ngắt tạm thời trong lúc capture và được bật lại sau (NetworkManager).
+
+Tuỳ chọn: `--iface wlo1`, `--pmkid-minutes 5`, `--hs-seconds 60`, `--mask-lens 8,9`, `--phone`, `--deep`, `--wordlist <file>`, `--yes` (bỏ xác nhận sở hữu mạng).
+
 ## Yêu cầu
 
 | Phần | Cần gì |
@@ -36,6 +46,7 @@ sudo ./capture/pmkid.sh wlan0 5 6      # hoặc chỉ định kênh
 
 - Không cần client đang kết nối, nhưng **chỉ ăn với AP còn dính lỗi PMKID** (nhiều router ISP cũ).
 - Kết quả: `captures/pmkid-*.pcapng` + `.hc22000` (tự convert nếu có `hcxpcapngtool`).
+- Script tự thích ứng hcxdumptool 6/7/8: v7+ tự thêm hậu tố band (`40` → `40b`), v8 tự dùng `-w`/`--rds` thay `-o`/`--enable_status`.
 
 ### Cách B — Handshake (cần client đang/ sắp kết nối)
 
