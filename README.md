@@ -1,68 +1,122 @@
-# BruteForceWF — audit mật khẩu WiFi của chính bạn
+# BruteForceWF
 
-[English](README.en.md) | [Tiếng Việt](README.md)
+[English](README.en.md) | **Tiếng Việt**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 [![hashcat](https://img.shields.io/badge/hashcat-%E2%89%A56.2-red.svg)](https://hashcat.net/hashcat/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#đóng-góp)
 
-*Offline WPA/WPA2 password audit toolkit: PMKID/handshake capture + hashcat 22000 orchestrator, with Vietnamese wordlists.*
+**BruteForceWF** là bộ công cụ audit bảo mật WiFi dành cho mạng của chính bạn: quét các điểm truy cập xung quanh, capture PMKID hoặc EAPOL handshake, và crack offline bằng hashcat trên GPU. Dự án đi kèm bộ wordlist tiếng Việt được tuyển chọn theo thói quen đặt mật khẩu tại Việt Nam.
 
-> **Chỉ dùng cho mạng bạn sở hữu hoặc có uỷ quyền bằng văn bản.** Truy cập WiFi của người khác là vi phạm pháp luật (VN: Điều 289 Bộ luật Hình sự). Script này để tự kiểm tra mật khẩu nhà mình có yếu không.
+> [!WARNING]
+> **Chỉ sử dụng trên mạng bạn sở hữu hoặc được uỷ quyền bằng văn bản.** Truy cập WiFi của người khác là hành vi vi phạm pháp luật (tại Việt Nam: Điều 289 Bộ luật Hình sự). Mục đích duy nhất của công cụ này là kiểm tra xem mật khẩu mạng nhà bạn có đủ mạnh hay không.
+
+## Mục lục
+
+- [Tính năng](#tính-năng)
+- [Cách hoạt động](#cách-hoạt-động)
+- [Yêu cầu hệ thống](#yêu-cầu-hệ-thống)
+- [Bắt đầu nhanh](#bắt-đầu-nhanh)
+- [Sử dụng](#sử-dụng)
+- [Wordlist](#wordlist)
+- [Hiệu năng](#hiệu-năng)
+- [Cấu trúc dự án](#cấu-trúc-dự-án)
+- [Ghi chú kỹ thuật](#ghi-chú-kỹ-thuật)
+- [Đóng góp](#đóng-góp)
+- [Tài liệu tham khảo](#tài-liệu-tham-khảo)
+- [License](#license)
+
+## Tính năng
+
+- **Quy trình trọn vẹn trong một lệnh** — `audit.py` quét AP, cho chọn mục tiêu, capture và crack tự động.
+- **Capture kép** — PMKID và EAPOL trong cùng một phiên `hcxdumptool`, tự fallback sang handshake bằng `airodump-ng` khi chưa thu được hash hợp lệ.
+- **Chuyển đổi tự động** — PCAP/PCAPNG sang định dạng hashcat mode `22000` bằng `hcxpcapngtool`.
+- **Điều phối hashcat nhiều tầng** — dictionary, rules, mask số và hybrid, dừng ngay khi bẻ được mật khẩu.
+- **Wordlist tiếng Việt** — 405 nghìn mật khẩu WiFi thực tế, ngày sinh, tên riêng và mật khẩu phổ biến.
+- **Wordlist cá nhân hoá** — `gen_wordlist.py` sinh biến thể từ tên, số điện thoại, ngày sinh của chính bạn.
+- **Đa nền tảng** — capture trên mọi bản Linux; crack trên Windows hoặc Linux.
 
 ## Cách hoạt động
 
-WPA2 **không thể** brute-force kiểu "thử từng mật khẩu online" — mỗi lần thử cần một 4-way handshake mới. Cách duy nhất khả thi:
+WPA2 **không thể** brute-force kiểu "thử từng mật khẩu online": mỗi lần thử đều cần một 4-way handshake mới. Cách tiếp cận khả thi duy nhất là crack offline:
+
+```
+Quét AP  →  Capture  →  Convert  →  Crack
+Linux       PMKID/EAPOL  .hc22000    hashcat (GPU)
+            handshake    (22000)
+```
 
 1. **Capture** PMKID hoặc EAPOL handshake của mạng mục tiêu (Linux + card WiFi hỗ trợ monitor mode).
 2. **Convert** sang định dạng hash `22000`.
-3. **Crack offline** bằng hashcat trên GPU — thử hàng trăm nghìn mật khẩu/giây.
+3. **Crack offline** bằng hashcat trên GPU — hàng trăm nghìn phép thử mỗi giây.
 
-## Quy trình nhanh — một lệnh
+## Yêu cầu hệ thống
+
+| Thành phần | Yêu cầu |
+|---|---|
+| Crack (Windows) | hashcat ≥ 6.2 + driver NVIDIA. Máy tham chiếu: GTX 1650 4GB ≈ **150–250 kH/s** |
+| Convert | hcxtools (`hcxpcapngtool`) — có bản win64, hoặc convert trên Linux |
+| Capture | Bất kỳ bản Linux nào (Ubuntu/Debian/Kali/Arch...) + card WiFi hỗ trợ **monitor mode + packet injection**. Card rời: Alfa AWUS036ACM/ACH; card laptop chạy Linux thường đáp ứng được. |
+| Công cụ trên Linux | `hcxdumptool` ≥ 6.3, `hcxtools`, `aircrack-ng` |
+
+Cài đặt:
+
+```bash
+# Ubuntu / Debian
+sudo apt install aircrack-ng hcxdumptool hcxtools
+
+# Arch Linux
+sudo pacman -S aircrack-ng hcxdumptool hcxtools iw
+```
+
+> Không cần Kali — Kali/live USB chỉ tiện vì có sẵn công cụ và driver. Card Intel (AX200/AX210) có thể monitor mode nhưng khả năng injection kém: vẫn bắt handshake thụ động được, còn deauth/PMKID nên dùng card MediaTek/Ralink/Atheros (ví dụ Alfa).
+
+> WSL2 + usbipd thường **không** chạy được monitor mode (kernel WSL thiếu driver cfg80211/mac80211) — hãy dùng live USB hoặc dual-boot Linux.
+
+## Bắt đầu nhanh
 
 ```bash
 sudo python3 audit.py
 ```
 
-Script quét toàn bộ AP xung quanh (SSID, BSSID, kênh, band, signal, bảo mật), cho chọn STT, rồi capture PMKID + EAPOL bằng `hcxdumptool`, fallback handshake nếu chưa đủ hash, lọc hash đúng BSSID mục tiêu và gọi `crack.py`. WiFi của máy ngắt tạm thời trong lúc capture và được bật lại sau (NetworkManager).
+`audit.py` thực hiện toàn bộ quy trình: quét các AP xung quanh (SSID, BSSID, kênh, band, signal, bảo mật), cho chọn mục tiêu theo số thứ tự, capture PMKID + EAPOL bằng `hcxdumptool`, fallback handshake nếu chưa đủ hash, lọc hash theo đúng BSSID mục tiêu rồi gọi `crack.py`. WiFi của máy sẽ tạm ngắt trong lúc capture và được khôi phục sau đó (NetworkManager).
 
-Tuỳ chọn: `--iface wlo1`, `--pmkid-minutes 5`, `--hs-seconds 60`, `--mask-lens 8,9`, `--phone`, `--deep`, `--wordlist <file>`, `--yes` (bỏ xác nhận sở hữu mạng).
+Các tuỳ chọn chính:
 
-Trước khi capture, script kiểm tra `hashcat -I` có backend OpenCL/CUDA, validate tham số và wordlist (đường dẫn tương đối được resolve theo thư mục hiện tại).
+```bash
+sudo python3 audit.py --iface wlo1          # chỉ định interface
+sudo python3 audit.py --pmkid-minutes 5     # thời gian capture PMKID
+sudo python3 audit.py --hs-seconds 60       # thời gian fallback handshake
+sudo python3 audit.py --mask-lens 8,9 --phone --deep
+sudo python3 audit.py --wordlist custom.txt
+sudo python3 audit.py --yes                 # bỏ xác nhận sở hữu mạng
+```
 
-## Yêu cầu
+Trước khi capture, script kiểm tra `hashcat -I` có backend OpenCL/CUDA, đồng thời validate tham số và wordlist (đường dẫn tương đối được resolve theo thư mục hiện tại).
 
-| Phần | Cần gì |
-|---|---|
-| Crack (Windows) | hashcat ≥ 6.2 + driver NVIDIA. Máy này: GTX 1650 4GB ≈ **150–250 kH/s** |
-| Convert | hcxtools (`hcxpcapngtool`) — có bản win64, hoặc convert trên Linux |
-| Capture | Bất kỳ Linux nào (Ubuntu/Debian/Kali/Arch...) + card WiFi hỗ trợ **monitor mode + packet injection**. Card rời: Alfa AWUS036ACM/ACH. Card laptop chạy Linux thường ổn. |
-| Tool trên Linux | `hcxdumptool` ≥ 6.3, `hcxtools`, `aircrack-ng` |
+## Sử dụng
 
-> Không cần Kali. Ubuntu/Debian: `sudo apt install aircrack-ng hcxdumptool hcxtools` là đủ. Arch: `sudo pacman -S aircrack-ng hcxdumptool hcxtools iw` (firmware WiFi: `linux-firmware`). Kali/live USB chỉ tiện vì có sẵn tool + driver. Card Intel (AX200/AX210) monitor mode được nhưng injection kém — vẫn bắt handshake thụ động được, còn deauth/PMKID thì nên dùng card MediaTek/Ralink/Atheros (vd Alfa).
+### 1. Capture (Linux)
 
-> WSL2 + usbipd thường **không** chạy được monitor mode (thiếu driver cfg80211/mac80211 trong kernel WSL) — dùng live USB/dual-boot Linux cho chắc.
+Ghi lại BSSID và kênh của AP mục tiêu (từ `iw dev`, trang quản trị router hoặc quét bằng `airodump-ng`).
 
-## Bước 1 — Capture (Linux)
-
-Ghi lại BSSID + kênh của AP nhà mày (ví dụ từ `iw dev` / router admin / `airodump-ng` quét).
-
-### Cách A — PMKID + EAPOL bằng hcxdumptool (clientless, thử trước)
+#### PMKID + EAPOL bằng hcxdumptool (clientless, ưu tiên thử trước)
 
 ```bash
 sudo ./capture/pmkid.sh wlan0 5        # quét 5 phút, mọi kênh
 sudo ./capture/pmkid.sh wlan0 5 6      # hoặc chỉ định kênh
-sudo ./capture/pmkid.sh wlan0 5 6c     # 6GHz: kênh + band c (a=2.4, b=5, c=6)
+sudo ./capture/pmkid.sh wlan0 5 6c     # 6GHz: kênh + hậu tố band (a=2.4, b=5, c=6)
 sudo ./capture/pmkid.sh wlan0 5 6 AA:BB:CC:DD:EE:FF   # chỉ AP mục tiêu (khuyến nghị)
 ```
 
-- Một phiên `hcxdumptool` vừa xin **PMKID** vừa bắt **EAPOL** (deauth/association chủ động); dừng sớm khi đã có PMKID hoặc cặp M1M2/M1M2M3 hoàn chỉnh.
-- Không cần client đang kết nối; PMKID **chỉ ăn với AP còn dính lỗi PMKID**, còn EAPOL cần client reconnect (hcxdumptool tự deauth).
-- Kết quả: `captures/pmkid-*.pcapng` + `.hc22000` (tự convert nếu có `hcxpcapngtool`); file `600`, thư mục `captures/` `700`.
-- Truyền BSSID để chỉ capture AP mục tiêu (BPF `wlan addr3`) — tránh lẫn hash hàng xóm.
-- Script tự thích ứng hcxdumptool: từ **6.3** dùng `-w`/`--rds` và `-c` kèm hậu tố band (`40` → `40b`, 6GHz dùng `c`); bản cũ hơn dùng `-o`/`--enable_status`.
+- Một phiên `hcxdumptool` vừa yêu cầu **PMKID** vừa bắt **EAPOL** (deauth/association chủ động); script dừng sớm khi đã có PMKID hoặc cặp M1M2/M1M2M3 hoàn chỉnh.
+- Không cần client đang kết nối. PMKID chỉ hiệu quả với AP còn tồn tại lỗ hổng PMKID; EAPOL cần client reconnect (hcxdumptool tự deauth).
+- Kết quả: `captures/pmkid-*.pcapng` + `.hc22000` (tự convert nếu có `hcxpcapngtool`); file có quyền `600`, thư mục `captures/` quyền `700`.
+- Truyền BSSID để chỉ capture AP mục tiêu (BPF `wlan addr3`), tránh lẫn hash của các AP lân cận.
+- Script tự thích ứng phiên bản hcxdumptool: từ **6.3** dùng `-w`/`--rds` và `-c` kèm hậu tố band (`40` → `40b`, 6GHz dùng `c`); bản cũ hơn dùng `-o`/`--enable_status`.
 
-### Cách B — Handshake fallback bằng airodump (khi Cách A không ra hash)
+#### Handshake fallback bằng airodump-ng
 
 ```bash
 sudo ./capture/handshake.sh wlan0 AA:BB:CC:DD:EE:FF 6
@@ -72,39 +126,40 @@ sudo ./capture/handshake.sh wlan0 AA:BB:CC:DD:EE:FF 6 11:22:33:44:55:66 60
 sudo ./capture/handshake.sh wlan0 AA:BB:CC:DD:EE:FF 5 "" 60 6
 ```
 
-- Script chạy `airodump-ng` + deauth ngắn để ép client reconnect (chỉ mạng của mày), tự dừng khi `hcxpcapngtool` tạo được hash; nếu dump thiếu frame (aircrack-ng báo nhầm handshake) sẽ chờ thêm và thử lại trong thời gian còn lại.
-- Thiết bị bật PMF/802.11w có thể bỏ qua deauth — khi đó chờ client tự kết nối lại.
+- Script chạy `airodump-ng` kèm các đợt deauth ngắn để ép client reconnect (chỉ mạng của bạn) và tự dừng khi `hcxpcapngtool` tạo được hash. Nếu capture thiếu frame (aircrack-ng báo nhầm handshake), script tiếp tục chờ và thử lại trong thời gian còn lại.
+- Thiết bị bật PMF/802.11w có thể bỏ qua deauth — khi đó chỉ cần chờ client tự kết nối lại.
 - Kết quả: `captures/hs-*.hc22000`.
 
-Copy file `.hc22000` sang Windows (`scp` / USB).
+Sau khi capture, copy file `.hc22000` sang máy Windows (`scp` hoặc USB).
 
-## Bước 2 — Convert (nếu chưa có .hc22000)
+### 2. Convert (nếu chưa có .hc22000)
 
 ```bash
 hcxpcapngtool -o capture.hc22000 capture.pcapng
 ```
-Chạy trên Linux, hoặc dùng `hcxpcapngtool.exe` (hcxtools win64) trên Windows. `crack.py` tự convert nếu bạn truyền file pcap và tool nằm trong PATH.
 
-## Bước 3 — Crack (Windows)
+Chạy trên Linux hoặc dùng `hcxpcapngtool.exe` (hcxtools win64) trên Windows. `crack.py` tự convert khi bạn truyền file pcap và công cụ nằm trong PATH.
 
-Cài hashcat: tải tại <https://hashcat.net/hashcat/>, giải nén (vd `C:\hashcat`), thêm vào PATH hoặc dùng `--hashcat`. Trên Arch: `sudo pacman -S hashcat opencl-nvidia` + driver NVIDIA (`nvidia-open` cho GTX 1650 trở lên, hoặc `nvidia`); kiểm tra bằng `hashcat -I`.
+### 3. Crack (Windows / Linux)
+
+Cài hashcat: tải tại <https://hashcat.net/hashcat/>, giải nén (ví dụ `C:\hashcat`), thêm vào PATH hoặc truyền `--hashcat`. Trên Arch: `sudo pacman -S hashcat opencl-nvidia` kèm driver NVIDIA (`nvidia-open` cho GTX 1650 trở lên, hoặc `nvidia`); kiểm tra bằng `hashcat -I`.
 
 ```powershell
 python crack.py captures\hs-20261114-203000.hc22000
 ```
 
-Chuỗi tấn công mặc định (dừng ngay khi bẻ được):
+Chuỗi tấn công mặc định (dừng ngay khi bẻ được mật khẩu):
 
-1. **Dictionary** — `personal.txt` (nếu có) → `vn-wifi.txt` (~405k) → `vn-common.txt` (~3.4k) → `dates.txt` → `vn-names.txt` → `rockyou.txt`/`top-1m.txt` (nếu có)
-2. **Rules best64** — biến thể của wordlist nhỏ; rockyou/top-1M chỉ chạy với `--deep`
-3. **Mask số** — mặc định 8 chữ số; `--mask-lens 8,9` để thêm 9 số; `--phone` thêm mask SĐT VN 10 số
-4. **Hybrid** (chỉ với `--deep`) — `vn-base.txt`/`personal.txt` + 3–4 số cuối (`matkhau123`)
+1. **Dictionary** — `personal.txt` (nếu có) → `vn-wifi.txt` (~405k) → `vn-common.txt` (~3.4k) → `dates.txt` → `vn-names.txt` → `rockyou.txt`/`top-1m.txt` (nếu có).
+2. **Rules best64** — biến thể của các wordlist nhỏ; rockyou/top-1M chỉ chạy khi bật `--deep`.
+3. **Mask số** — mặc định 8 chữ số; `--mask-lens 8,9` thêm độ dài 9; `--phone` thêm mask số điện thoại Việt Nam (10 chữ số).
+4. **Hybrid** — chỉ với `--deep`: `vn-base.txt`/`personal.txt` kết hợp 3–4 chữ số cuối (ví dụ `matkhau123`).
 
-Tuỳ chọn khác:
+Các tuỳ chọn khác:
 
 ```powershell
 python crack.py capture.hc22000 --dry-run          # xem kế hoạch, không chạy
-python crack.py capture.hc22000 --show-only        # in pass đã crack trong potfile
+python crack.py capture.hc22000 --show-only        # in mật khẩu đã crack trong potfile
 python crack.py capture.hc22000 --phone            # thêm mask số điện thoại VN
 python crack.py capture.hc22000 --deep             # thêm rockyou+best64, hybrid (lâu)
 python crack.py capture.hc22000 --wordlist C:\lists\custom.txt --mask-lens 8,9
@@ -114,54 +169,56 @@ python crack.py capture.hc22000 --wordlist C:\lists\custom.txt --mask-lens 8,9
 
 | File | Nội dung |
 |---|---|
-| `vn-wifi.txt` | **405k mật khẩu WiFi Việt thật** (từ app WiFi Chùa, leak công khai), đã lọc 8–63 ký tự + dedupe |
-| `vn-common.txt` | ~3.4k mật khẩu phổ biến VN tự biên (ISP, router, từ + đuôi số), **≥ 8 ký tự** |
+| `vn-wifi.txt` | **405k mật khẩu WiFi Việt thực tế** (từ app WiFi Chùa, dữ liệu công khai), đã lọc 8–63 ký tự và dedupe |
+| `vn-common.txt` | ~3.4k mật khẩu phổ biến tại Việt Nam được biên soạn thủ công (ISP, router, từ + hậu tố số), **≥ 8 ký tự** |
 | `dates.txt` | 20.8k ngày sinh dạng `DDMMYYYY` (1970–2026) |
-| `vn-names.txt` | 2k tổ hợp tên VN ≥ 8 ký tự |
+| `vn-names.txt` | 2k tổ hợp tên Việt Nam ≥ 8 ký tự |
 | `vn-base.txt` | từ gốc ngắn, dùng cho rules/hybrid |
-| `personal.txt` | sinh bằng `gen_wordlist.py` từ thông tin của chính bạn — hiệu quả nhất; tự động được dùng nếu tồn tại |
+| `personal.txt` | sinh bằng `gen_wordlist.py` từ thông tin của chính bạn — hiệu quả nhất; được tự động sử dụng nếu tồn tại |
 
-3 list đầu đã có sẵn trong repo. Chạy lại script khi muốn cập nhật từ nguồn (tự lọc + dedupe):
+Ba danh sách đầu đã có sẵn trong repo. Chạy lại script để cập nhật từ nguồn (tự động lọc và dedupe):
 
 ```powershell
 python fetch_wordlists.py
 ```
 
-Sinh wordlist cá nhân hoá (tên, SĐT, ngày sinh, tên đường...):
+Sinh wordlist cá nhân hoá (tên, số điện thoại, ngày sinh, tên đường...):
 
 ```powershell
 python gen_wordlist.py --words "trung,nguyenthanhtrung,edufocus" --numbers "0912345678,15082000"
 python gen_wordlist.py --words-file tokens.txt --numbers 0912345678 --pairs
 ```
 
-Tải thêm wordlist toàn cầu (tuỳ chọn, đặt đúng tên để crack.py tự dùng):
+Tải thêm wordlist toàn cầu (tuỳ chọn — đặt đúng tên để `crack.py` tự động sử dụng):
 
 ```powershell
 curl.exe -L -o wordlists/rockyou.txt https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt
 curl.exe -L -o wordlists/top-1m.txt https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10-million-password-list-top-1000000.txt
 ```
 
-### Nguồn wordlist trên mạng (đã kiểm chứng)
+### Nguồn wordlist (đã kiểm chứng)
 
 | Nguồn | Nội dung | Ghi chú |
 |---|---|---|
-| [polypores/vn-common-pass-dict](https://github.com/polypores/vn-common-pass-dict) | 418k mật khẩu WiFi VN (nguồn WiFi Chùa, 2021) | `fetch_wordlists.py` dùng list này |
-| [lucthienphong1120/wordlists-vi](https://github.com/lucthienphong1120/wordlists-vi) | Cùng list WiFi trên (trùng md5) + `vn1m`/`vn10k` + combine 20MB | bản sao thay thế nếu link gốc chết |
-| [bateMD/wordlist-vn](https://github.com/bateMD/wordlist-vn) | Tên VN, ngày sinh, default creds, username Voz, all-in-one 25MB, hashcat rules | repo còn update 2026; `fetch_wordlists.py` lấy dates + names |
-| [conwnet/wpa-dictionary](https://github.com/conwnet/wpa-dictionary) | WPA dict hướng Trung Quốc: birthday ddmmyyyy (6MB), english, digits | tham khảo pattern ngày sinh |
-| [weakpass.com/wordlists/weakpass_2_wifi](https://weakpass.com/wordlists/weakpass_2_wifi) | wordlist WiFi tổng hợp toàn cầu | tải qua trình duyệt (link direct cần JS) |
+| [polypores/vn-common-pass-dict](https://github.com/polypores/vn-common-pass-dict) | 418k mật khẩu WiFi Việt (nguồn WiFi Chùa, 2021) | được `fetch_wordlists.py` sử dụng |
+| [lucthienphong1120/wordlists-vi](https://github.com/lucthienphong1120/wordlists-vi) | Cùng danh sách WiFi (trùng md5) + `vn1m`/`vn10k` + bản combine 20MB | mirror thay thế nếu link gốc không còn |
+| [bateMD/wordlist-vn](https://github.com/bateMD/wordlist-vn) | Tên Việt, ngày sinh, default creds, username Voz, bản all-in-one 25MB, hashcat rules | vẫn được cập nhật trong 2026; `fetch_wordlists.py` lấy dates + names |
+| [conwnet/wpa-dictionary](https://github.com/conwnet/wpa-dictionary) | Wordlist WPA hướng Trung Quốc: ngày sinh ddmmyyyy (6MB), english, digits | tham khảo cho pattern ngày sinh |
+| [weakpass.com/wordlists/weakpass_2_wifi](https://weakpass.com/wordlists/weakpass_2_wifi) | Wordlist WiFi tổng hợp toàn cầu | tải qua trình duyệt (link trực tiếp yêu cầu JS) |
 | [rockyou trên weakpass](https://weakpass.com/wordlists/rockyou.txt) / `apt install wordlists` (Kali) | rockyou 14.3M | mirror khi GitHub chậm |
 
-Lưu ý: các list từ leak dùng cho **audit máy mình**, không phân phối lại. Mật khẩu mặc định của router Viettel/VNPT/FPT đời mới thường là chuỗi random in trên tem — wordlist gần như không bẻ được, đó là dấu hiệu tốt.
+> Các danh sách có nguồn gốc từ dữ liệu rò rỉ chỉ nên dùng để **audit thiết bị của chính bạn**, không phân phối lại. Mật khẩu mặc định của router Viettel/VNPT/FPT đời mới thường là chuỗi ngẫu nhiên in trên tem — wordlist gần như không bẻ được, và đó là dấu hiệu tốt.
 
-Kết quả lưu trong `cracked.potfile`, in ra dạng:
+Kết quả được lưu trong `cracked.potfile` và in ra dạng:
 
 ```
 [+] ĐÃ BẺ ĐƯỢC 1/1 hash
     SSID: TestWiFi  |  pass: 12345678
 ```
 
-## Ước lượng thời gian (GTX 1650, ~200 kH/s)
+## Hiệu năng
+
+Ước lượng thời gian trên GPU tham chiếu **GTX 1650 (~200 kH/s)**:
 
 | Giai đoạn | Keyspace | Thời gian |
 |---|---|---|
@@ -172,21 +229,41 @@ Kết quả lưu trong `cracked.potfile`, in ra dạng:
 | top-1M plain | 1M | ~5–10 giây |
 | rockyou plain | 14.3M | ~1–2 phút |
 | 8 chữ số | 100M | ~8–15 phút |
-| SĐT VN (`--phone`) | 500M | ~40–70 phút |
+| Số điện thoại VN (`--phone`) | 500M | ~40–70 phút |
 | 9 chữ số | 1B | ~1.5–3 giờ |
 | rockyou + best64 (`--deep`) | ~1.1B | ~1.5–3 giờ |
 
-## Lưu ý kỹ thuật
+## Cấu trúc dự án
 
-- **WPA3-only (SAE)**: quy trình này không áp dụng — PMKID/EAPOL của WPA3-SAE không crack được bằng mode 22000. Nếu router để WPA2/WPA3 mixed thì handshake WPA2 vẫn bắt được.
-- WPA-PSK yêu cầu **8–63 ký tự**, nên mọi mask bắt đầu từ 8 và wordlist chỉ chứa ứng viên ≥ 8 (ngắn hơn chắc chắn sai).
-- Mật khẩu mạnh (dài, ngẫu nhiên) thì **không bẻ được** — đó chính là mục đích của audit: nếu script này ra pass nhanh, mật khẩu của mày đang yếu.
-- PMKID không bắt được ≠ AP an toàn; thử handshake. Handshake không bắt được thì kiểm tra kênh/BSSID/khoảng cách.
-- `--tot` của hcxdumptool tính bằng **phút**; Ctrl+C dừng sớm, file vẫn giữ.
-- Sau capture, script tự đưa card về **managed mode** (xoá iface monitor phụ như `wlo1mon` nếu có). `audit.py` còn tự bật lại NetworkManager; nếu chạy `capture/*.sh` riêng thì chạy `sudo systemctl start NetworkManager` để có mạng lại.
-- Tăng tốc: card rời gắn anten, đứng gần AP; crack thì GPU NVIDIA rời nhanh hơn CPU hàng chục lần.
+```
+BruteForceWF/
+├── audit.py              # Quy trình trọn vẹn: quét → capture → crack
+├── crack.py              # Orchestrator hashcat mode 22000
+├── gen_wordlist.py       # Sinh wordlist cá nhân hoá
+├── fetch_wordlists.py    # Tải + lọc wordlist từ nguồn công khai
+├── capture/
+│   ├── pmkid.sh          # Capture PMKID + EAPOL (hcxdumptool)
+│   └── handshake.sh      # Fallback handshake (airodump-ng)
+├── wordlists/            # Wordlist tiếng Việt đóng gói sẵn
+├── LICENSE               # MIT
+└── README.md
+```
 
-## Nguồn tham khảo
+## Ghi chú kỹ thuật
+
+- **WPA3-only (SAE)**: quy trình này không áp dụng — PMKID/EAPOL của WPA3-SAE không crack được bằng mode 22000. Với router cấu hình WPA2/WPA3 mixed, handshake WPA2 vẫn bắt được bình thường.
+- WPA-PSK yêu cầu **8–63 ký tự**, nên mọi mask bắt đầu từ độ dài 8 và wordlist chỉ chứa ứng viên ≥ 8 ký tự (ngắn hơn chắc chắn sai).
+- Mật khẩu mạnh (dài, ngẫu nhiên) **không thể bẻ được** — đó chính là mục đích của audit: nếu công cụ tìm ra mật khẩu nhanh, mật khẩu của bạn đang yếu.
+- Không bắt được PMKID **không** đồng nghĩa AP an toàn; hãy thử handshake. Nếu handshake cũng không bắt được, kiểm tra lại kênh/BSSID/khoảng cách.
+- `--tot` của hcxdumptool tính bằng **phút**; Ctrl+C dừng sớm và file vẫn được giữ nguyên.
+- Sau capture, script tự đưa card về **managed mode** (xoá interface monitor phụ như `wlo1mon` nếu có). `audit.py` khôi phục NetworkManager tự động; nếu chạy riêng `capture/*.sh`, hãy chạy `sudo systemctl start NetworkManager` để có mạng trở lại.
+- Tăng tốc: dùng card rời có anten và đứng gần AP khi capture; khi crack, GPU NVIDIA rời nhanh hơn CPU hàng chục lần.
+
+## Đóng góp
+
+Mọi pull request và issue đều được hoan nghênh. Vui lòng mở issue để thảo luận trước khi thực hiện các thay đổi lớn, và giữ nguyên nguyên tắc của dự án: công cụ chỉ phục vụ audit mạng thuộc sở hữu của chính người dùng.
+
+## Tài liệu tham khảo
 
 - hashcat WPA/WPA2 cracking: <https://hashcat.net/wiki/doku.php?id=cracking_wpawpa2>
 - hcxdumptool manpage: <https://manpages.debian.org/testing/hcxdumptool/hcxdumptool.1.en.html>
@@ -195,4 +272,4 @@ Kết quả lưu trong `cracked.potfile`, in ra dạng:
 
 ## License
 
-[MIT](LICENSE) © 2026 Nguyễn Thành Trung — dùng, sửa, phân phối tự do, kèm điều kiện giữ nguyên copyright notice. Phần wordlist (`vn-wifi.txt`, `dates.txt`, `vn-names.txt`) lấy từ nguồn công khai bên thứ ba, tuân theo license của nguồn gốc; **chỉ dùng để audit thiết bị của chính bạn**.
+[MIT](LICENSE) © 2026 Nguyễn Thành Trung — tự do sử dụng, chỉnh sửa và phân phối, với điều kiện giữ nguyên copyright notice. Các wordlist (`vn-wifi.txt`, `dates.txt`, `vn-names.txt`) có nguồn gốc từ bên thứ ba công khai và tuân theo license gốc của nguồn; **chỉ sử dụng để audit thiết bị của chính bạn**.
