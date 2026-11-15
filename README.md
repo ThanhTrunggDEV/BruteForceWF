@@ -19,7 +19,7 @@ WPA2 **không thể** brute-force kiểu "thử từng mật khẩu online" — 
 | Capture | Bất kỳ Linux nào (Ubuntu/Debian/Kali/Arch...) + card WiFi hỗ trợ **monitor mode + packet injection**. Card rời: Alfa AWUS036ACM/ACH. Card laptop chạy Linux thường ổn. |
 | Tool trên Linux | `hcxdumptool` ≥ 6.3, `hcxtools`, `aircrack-ng` |
 
-> Không cần Kali. Ubuntu/Debian: `sudo apt install aircrack-ng hcxdumptool hcxtools` là đủ. Kali/live USB chỉ tiện vì có sẵn tool + driver. Card Intel (AX200/AX210) monitor mode được nhưng injection kém — vẫn bắt handshake thụ động được, còn deauth/PMKID thì nên dùng card MediaTek/Ralink/Atheros (vd Alfa).
+> Không cần Kali. Ubuntu/Debian: `sudo apt install aircrack-ng hcxdumptool hcxtools` là đủ. Arch: `sudo pacman -S aircrack-ng hcxdumptool hcxtools iw` (firmware WiFi: `linux-firmware`). Kali/live USB chỉ tiện vì có sẵn tool + driver. Card Intel (AX200/AX210) monitor mode được nhưng injection kém — vẫn bắt handshake thụ động được, còn deauth/PMKID thì nên dùng card MediaTek/Ralink/Atheros (vd Alfa).
 
 > WSL2 + usbipd thường **không** chạy được monitor mode (thiếu driver cfg80211/mac80211 trong kernel WSL) — dùng live USB/dual-boot Linux cho chắc.
 
@@ -60,7 +60,7 @@ Chạy trên Linux, hoặc dùng `hcxpcapngtool.exe` (hcxtools win64) trên Wind
 
 ## Bước 3 — Crack (Windows)
 
-Cài hashcat: tải tại <https://hashcat.net/hashcat/>, giải nén (vd `C:\hashcat`), thêm vào PATH hoặc dùng `--hashcat`.
+Cài hashcat: tải tại <https://hashcat.net/hashcat/>, giải nén (vd `C:\hashcat`), thêm vào PATH hoặc dùng `--hashcat`. Trên Arch: `sudo pacman -S hashcat opencl-nvidia` + driver NVIDIA (`nvidia-open` cho GTX 1650 trở lên, hoặc `nvidia`); kiểm tra bằng `hashcat -I`.
 
 ```powershell
 python crack.py captures\hs-20261114-203000.hc22000

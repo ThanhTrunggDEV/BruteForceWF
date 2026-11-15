@@ -48,6 +48,12 @@ TOOL_DIRS = {
     ],
 }
 
+RULE_DIRS = [
+    Path("/usr/share/hashcat/rules"),
+    Path("/usr/local/share/hashcat/rules"),
+]
+RULE_FILES = ("best66.rule", "best64.rule")  # hashcat >= 7 dùng best66
+
 
 def find_tool(name, explicit=None):
     if explicit:
@@ -154,7 +160,7 @@ def wordlist_size(path):
         return 0
 
 
-def build_stages(hashfile, wordlists, mask_lens, deep, best64, phone):
+def build_stages(hashfile, wordlists, mask_lens, deep, rules_path, phone):
     def base(extra):
         return [
             "-m", MODE, str(hashfile),
@@ -166,11 +172,11 @@ def build_stages(hashfile, wordlists, mask_lens, deep, best64, phone):
     for wl in wordlists:
         stages.append((f"dictionary: {wl.name}", base(["-a", "0", str(wl)])))
 
-    if best64:
+    if rules_path:
         for wl in wordlists:
             if wl.name in LARGE_LISTS and not deep:
                 continue
-            stages.append((f"dictionary + best64: {wl.name}", base(["-a", "0", str(wl), "-r", str(best64)])))
+            stages.append((f"dictionary + {rules_path.name}: {wl.name}", base(["-a", "0", str(wl), "-r", str(rules_path)])))
 
     for length in mask_lens:
         stages.append((f"mask: {length} chữ số", base(["-a", "3", "?d" * length])))
@@ -254,13 +260,18 @@ def main():
             print("[-] chưa có kết quả trong potfile")
         return
 
-    best64 = None
+    rules_file = None
     if hashcat != "<hashcat>":
-        candidate = Path(hashcat).parent / "rules" / "best64.rule"
-        if candidate.is_file():
-            best64 = candidate
-        else:
-            print("[!] không thấy rules/best64.rule cạnh hashcat — bỏ qua giai đoạn rules")
+        for rule_dir in [Path(hashcat).parent / "rules", *RULE_DIRS]:
+            for name in RULE_FILES:
+                candidate = rule_dir / name
+                if candidate.is_file():
+                    rules_file = candidate
+                    break
+            if rules_file:
+                break
+        if not rules_file:
+            print("[!] không thấy best66/best64.rule — bỏ qua giai đoạn rules")
 
     mask_lens = []
     for chunk in args.mask_lens.split(","):
@@ -275,7 +286,7 @@ def main():
     if not wordlists:
         sys.exit("[x] không có wordlist nào (tạo wordlists/vn-common.txt hoặc dùng --wordlist)")
 
-    stages = build_stages(hashfile, wordlists, mask_lens, args.deep, best64, args.phone)
+    stages = build_stages(hashfile, wordlists, mask_lens, args.deep, rules_file, args.phone)
 
     if args.dry_run:
         print("\n[*] kế hoạch tấn công:")
