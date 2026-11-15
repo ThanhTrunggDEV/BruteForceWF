@@ -16,7 +16,7 @@ WPA2 **không thể** brute-force kiểu "thử từng mật khẩu online" — 
 sudo python3 audit.py
 ```
 
-Script quét toàn bộ AP xung quanh (SSID, BSSID, kênh, band, signal, bảo mật), cho chọn STT, rồi tự thử PMKID → handshake, lọc hash đúng BSSID mục tiêu và gọi `crack.py`. WiFi của máy ngắt tạm thời trong lúc capture và được bật lại sau (NetworkManager).
+Script quét toàn bộ AP xung quanh (SSID, BSSID, kênh, band, signal, bảo mật), cho chọn STT, rồi capture PMKID + EAPOL bằng `hcxdumptool`, fallback handshake nếu chưa đủ hash, lọc hash đúng BSSID mục tiêu và gọi `crack.py`. WiFi của máy ngắt tạm thời trong lúc capture và được bật lại sau (NetworkManager).
 
 Tuỳ chọn: `--iface wlo1`, `--pmkid-minutes 5`, `--hs-seconds 60`, `--mask-lens 8,9`, `--phone`, `--deep`, `--wordlist <file>`, `--yes` (bỏ xác nhận sở hữu mạng).
 
@@ -39,7 +39,7 @@ Trước khi capture, script kiểm tra `hashcat -I` có backend OpenCL/CUDA, va
 
 Ghi lại BSSID + kênh của AP nhà mày (ví dụ từ `iw dev` / router admin / `airodump-ng` quét).
 
-### Cách A — PMKID (clientless, thử trước)
+### Cách A — PMKID + EAPOL bằng hcxdumptool (clientless, thử trước)
 
 ```bash
 sudo ./capture/pmkid.sh wlan0 5        # quét 5 phút, mọi kênh
@@ -48,12 +48,13 @@ sudo ./capture/pmkid.sh wlan0 5 6c     # 6GHz: kênh + band c (a=2.4, b=5, c=6)
 sudo ./capture/pmkid.sh wlan0 5 6 AA:BB:CC:DD:EE:FF   # chỉ AP mục tiêu (khuyến nghị)
 ```
 
-- Không cần client đang kết nối, nhưng **chỉ ăn với AP còn dính lỗi PMKID** (nhiều router ISP cũ).
+- Một phiên `hcxdumptool` vừa xin **PMKID** vừa bắt **EAPOL** (deauth/association chủ động); dừng sớm khi đã có PMKID hoặc cặp M1M2/M1M2M3 hoàn chỉnh.
+- Không cần client đang kết nối; PMKID **chỉ ăn với AP còn dính lỗi PMKID**, còn EAPOL cần client reconnect (hcxdumptool tự deauth).
 - Kết quả: `captures/pmkid-*.pcapng` + `.hc22000` (tự convert nếu có `hcxpcapngtool`); file `600`, thư mục `captures/` `700`.
-- Truyền BSSID để chỉ capture AP mục tiêu (BPF `wlan addr3`, tự thoát khi có EAPOL) — tránh lẫn hash hàng xóm.
+- Truyền BSSID để chỉ capture AP mục tiêu (BPF `wlan addr3`) — tránh lẫn hash hàng xóm.
 - Script tự thích ứng hcxdumptool: từ **6.3** dùng `-w`/`--rds` và `-c` kèm hậu tố band (`40` → `40b`, 6GHz dùng `c`); bản cũ hơn dùng `-o`/`--enable_status`.
 
-### Cách B — Handshake (cần client đang/ sắp kết nối)
+### Cách B — Handshake fallback bằng airodump (khi Cách A không ra hash)
 
 ```bash
 sudo ./capture/handshake.sh wlan0 AA:BB:CC:DD:EE:FF 6

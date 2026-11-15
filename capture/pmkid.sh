@@ -125,7 +125,8 @@ if [[ -n "$BSSID" ]]; then
   if [[ -n "$BPF_FILE" ]] && hcxdumptool --bpfc="wlan addr3 $BSSID_HEX" > "$BPF_FILE" 2>/dev/null && [[ -s "$BPF_FILE" ]]; then
     ARGS+=(--bpf="$BPF_FILE")
     if hcxdumptool -h 2>/dev/null | grep -q -- '--exitoneapol'; then
-      ARGS+=(--exitoneapol=1)
+      # bitmask 1|2|4: PMKID hoặc EAPOL đủ cặp (ý nghĩa bit đổi giữa các bản, nhưng 7 luôn đúng)
+      ARGS+=(--exitoneapol=7)
     fi
     echo "[*] chỉ capture AP $BSSID (BPF)"
   else
@@ -136,7 +137,7 @@ if [[ -n "$BSSID" ]]; then
   fi
 fi
 
-echo "[*] PMKID capture ${MINUTES} phút trên $IFACE${CHANNEL:+ (kênh $CHANNEL)}"
+echo "[*] capture PMKID + EAPOL ${MINUTES} phút trên $IFACE${CHANNEL:+ (kênh $CHANNEL)}"
 echo "    Ctrl+C để dừng sớm — file vẫn được giữ."
 hcxdumptool "${ARGS[@]}" || true
 restore_iface "$IFACE" "$OLD_MON"

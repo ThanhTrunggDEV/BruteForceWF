@@ -273,7 +273,7 @@ def capture(ap, iface, pmkid_minutes, hs_seconds, protected):
     print("[!] WiFi của máy sẽ ngắt tạm thời trong lúc capture, tự bật lại sau.")
     before = snapshot_hashes()
 
-    print("\n[1/2] thử PMKID (không cần client đang kết nối)...")
+    print("\n[1/2] capture PMKID + EAPOL bằng hcxdumptool (một phiên)...")
     pmkid_chan = ap["chan"]
     suffix = {"2.4": "a", "5": "b", "6": "c"}.get(ap["band"])
     if suffix and pmkid_chan.isdigit():
@@ -292,7 +292,7 @@ def capture(ap, iface, pmkid_minutes, hs_seconds, protected):
         return target, raws
 
     restore_iface(iface, protected)
-    print("\n[2/2] chưa có PMKID đúng mục tiêu — bắt handshake (cần client reconnect)...")
+    print("\n[2/2] chưa có hash đúng mục tiêu — fallback handshake bằng airodump (cần client reconnect)...")
     subprocess.run(
         [
             "bash", str(ROOT / "capture" / "handshake.sh"),
@@ -363,7 +363,7 @@ def main():
         description="Quét WiFi, chọn mục tiêu, capture và crack tự động (chỉ mạng của bạn).",
     )
     parser.add_argument("--iface", help="card WiFi (mặc định: tự dò)")
-    parser.add_argument("--pmkid-minutes", type=int, default=5, help="thời gian thử PMKID, phút (mặc định: 5)")
+    parser.add_argument("--pmkid-minutes", type=int, default=5, help="thời gian capture PMKID + EAPOL, phút (mặc định: 5)")
     parser.add_argument("--hs-seconds", type=int, default=60, help="thời gian tối đa bắt handshake, giây (mặc định: 60)")
     parser.add_argument("--wordlist", help="wordlist tuỳ chỉnh cho bước crack")
     parser.add_argument("--mask-lens", default="8", help="độ dài mask số cho bước crack (mặc định: 8)")
