@@ -1,5 +1,7 @@
 # BruteForceWF — audit mật khẩu WiFi của chính bạn
 
+[English](README.en.md) | [Tiếng Việt](README.md)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 [![hashcat](https://img.shields.io/badge/hashcat-%E2%89%A56.2-red.svg)](https://hashcat.net/hashcat/)
