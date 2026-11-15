@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+
+# crack artifacts
+cracked.potfile
+captures/
+*.hc22000
+*.pcapng
+*.pcap
+*.cap
+
+# wordlist tải từ mạng — tự tải lại bằng fetch_wordlists.py
+wordlists/vn-wifi.txt
+wordlists/dates.txt
+wordlists/vn-names.txt
+wordlists/rockyou.txt
+wordlists/top-1m.txt
+wordlists/personal.txt
