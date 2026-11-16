@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Thu PMKID + EAPOL handshake (clientless, hcxdumptool >= 6.3)
 # Chỉ chạy trên mạng bạn sở hữu. Ví dụ:
-#   sudo ./pmkid.sh wlan0 5            # 5 phút, quét mọi kênh
+#   sudo ./pmkid.sh wlan0 5            # 5 phút, kênh mặc định 1/6/11
+#   sudo ./pmkid.sh wlan0 5 all        # 5 phút, mọi kênh card hỗ trợ (-F)
 #   sudo ./pmkid.sh wlan0 5 6          # 5 phút, chỉ kênh 6
 #   sudo ./pmkid.sh wlan0 5 6c         # 6GHz: kênh 6 band c (a=2.4, b=5, c=6)
 #   sudo ./pmkid.sh wlan0 5 6 AA:BB:CC:DD:EE:FF   # chỉ AP mục tiêu (khuyến nghị)
@@ -20,8 +21,11 @@ if [[ ! "$MINUTES" =~ ^[1-9][0-9]*$ ]]; then
   echo "[x] minutes phải là số nguyên dương: $MINUTES" >&2
   exit 1
 fi
-if [[ -n "$CHANNEL" && ! "$CHANNEL" =~ ^[0-9]+[a-e]?$ ]]; then
-  echo "[x] channel không hợp lệ: $CHANNEL (vd 6, 40b, 6c)" >&2
+ALL_CHANNELS=0
+if [[ "$CHANNEL" == "all" || "$CHANNEL" == "full" ]]; then
+  ALL_CHANNELS=1
+elif [[ -n "$CHANNEL" && ! "$CHANNEL" =~ ^[0-9]+[a-e]?$ ]]; then
+  echo "[x] channel không hợp lệ: $CHANNEL (vd 6, 40b, 6c, all)" >&2
   exit 1
 fi
 if [[ -n "$BSSID" && ! "$BSSID" =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
@@ -107,7 +111,9 @@ else
   ARGS=(-i "$IFACE" -o "$OUT" --tot="$MINUTES" --enable_status=1)
 fi
 
-if [[ -n "$CHANNEL" ]]; then
+if (( ALL_CHANNELS )); then
+  ARGS+=(-F)
+elif [[ -n "$CHANNEL" ]]; then
   if (( HCX_NEW )); then
     if [[ "$CHANNEL" =~ ^[0-9]+$ ]]; then
       if (( CHANNEL <= 14 )); then CHANNEL+="a"; else CHANNEL+="b"; fi
@@ -137,7 +143,14 @@ if [[ -n "$BSSID" ]]; then
   fi
 fi
 
-echo "[*] capture PMKID + EAPOL ${MINUTES} phút trên $IFACE${CHANNEL:+ (kênh $CHANNEL)}"
+if (( ALL_CHANNELS )); then
+  CHAN_DESC="mọi kênh card hỗ trợ"
+elif [[ -n "$CHANNEL" ]]; then
+  CHAN_DESC="kênh $CHANNEL"
+else
+  CHAN_DESC="kênh mặc định 1/6/11"
+fi
+echo "[*] capture PMKID + EAPOL ${MINUTES} phút trên $IFACE ($CHAN_DESC)"
 echo "    Ctrl+C để dừng sớm — file vẫn được giữ."
 hcxdumptool "${ARGS[@]}" || true
 restore_iface "$IFACE" "$OLD_MON"

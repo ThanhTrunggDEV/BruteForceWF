@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import ui
@@ -190,11 +191,22 @@ def scan():
     return aps
 
 
+def target_issue(ap):
+    security = ap["security"].upper()
+    if "WEP" in security or security in ("", "OPEN"):
+        return "chỉ hỗ trợ WPA/WPA2 — mạng này mở hoặc dùng WEP"
+    if "802.1X" in security:
+        return "mạng WPA-Enterprise (802.1X) — không crack được bằng mode 22000"
+    if "WPA3" in security and "WPA2" not in security:
+        return "mạng WPA3-only (SAE) — không crack được bằng mode 22000"
+    return None
+
+
 def choose(aps):
     ui.scan_table(aps)
     while True:
         try:
-            choice = ui.ask("\nChọn STT mục tiêu (r = quét lại, q = thoát): ").strip().lower()
+            choice = ui.ask("\nChọn STT mục tiêu (a = tất cả, r = quét lại, q = thoát): ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             sys.exit("\n[*] huỷ")
         if choice in ("q", "quit"):
@@ -205,21 +217,30 @@ def choose(aps):
                 sys.exit("[x] không quét được mạng nào")
             ui.scan_table(aps)
             continue
+        if choice in ("a", "all"):
+            targets, skipped = [], []
+            for ap in aps:
+                issue = target_issue(ap)
+                if issue:
+                    skipped.append((ap, issue))
+                    continue
+                targets.append(ap)
+            for ap, issue in skipped:
+                ui.warn(f"bỏ qua {ap['ssid']} ({ap['bssid']}): {issue}.")
+            if not targets:
+                ui.warn("không có mạng WPA/WPA2 nào để crack")
+                continue
+            ui.info(f"đã chọn {len(targets)} mục tiêu WPA/WPA2")
+            return targets
         if not choice.isdigit() or not 1 <= int(choice) <= len(aps):
             ui.warn("STT không hợp lệ")
             continue
         ap = aps[int(choice) - 1]
-        security = ap["security"].upper()
-        if "WEP" in security or security in ("", "OPEN"):
-            ui.warn("chỉ hỗ trợ WPA/WPA2 — mạng này mở hoặc dùng WEP.")
+        issue = target_issue(ap)
+        if issue:
+            ui.warn(f"{issue}.")
             continue
-        if "802.1X" in security:
-            ui.warn("mạng WPA-Enterprise (802.1X) — không crack được bằng mode 22000.")
-            continue
-        if "WPA3" in security and "WPA2" not in security:
-            ui.warn("mạng WPA3-only (SAE) — không crack được bằng mode 22000.")
-            continue
-        return ap
+        return [ap]
 
 
 def snapshot_hashes():
@@ -254,7 +275,20 @@ def filter_hash(hashfiles, bssid):
     return output
 
 
-def capture(ap, iface, pmkid_minutes, hs_seconds, protected):
+def combine_hashes(hashfiles):
+    output = CAPTURES / f"all-targets-{time.strftime('%Y%m%d-%H%M%S')}.hc22000"
+    lines, seen = [], set()
+    for hashfile in hashfiles:
+        for line in hashfile.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if line and line not in seen:
+                seen.add(line)
+                lines.append(line)
+    output.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    return output
+
+
+def capture(ap, iface, pmkid_minutes, hs_seconds, protected, all_channels=False):
     CAPTURES.mkdir(exist_ok=True)
     try:
         os.chmod(CAPTURES, 0o700)
@@ -265,9 +299,9 @@ def capture(ap, iface, pmkid_minutes, hs_seconds, protected):
     before = snapshot_hashes()
 
     ui.rule("[1/2] capture PMKID + EAPOL bằng hcxdumptool (một phiên)")
-    pmkid_chan = ap["chan"]
+    pmkid_chan = "all" if all_channels else ap["chan"]
     suffix = {"2.4": "a", "5": "b", "6": "c"}.get(ap["band"])
-    if suffix and pmkid_chan.isdigit():
+    if not all_channels and suffix and pmkid_chan.isdigit():
         pmkid_chan += suffix
     subprocess.run(
         [
@@ -355,6 +389,7 @@ def main():
     )
     parser.add_argument("--iface", help="card WiFi (mặc định: tự dò)")
     parser.add_argument("--pmkid-minutes", type=int, default=5, help="thời gian capture PMKID + EAPOL, phút (mặc định: 5)")
+    parser.add_argument("--all-channels", action="store_true", help="quét mọi kênh card hỗ trợ ở bước PMKID + EAPOL (-F)")
     parser.add_argument("--hs-seconds", type=int, default=60, help="thời gian tối đa bắt handshake, giây (mặc định: 60)")
     parser.add_argument("--wordlist", help="wordlist tuỳ chỉnh cho bước crack")
     parser.add_argument("--mask-lens", default="8", help="độ dài mask số cho bước crack (mặc định: 8)")
@@ -397,12 +432,16 @@ def main():
     aps = scan()
     if not aps:
         ui.fail("không quét được mạng nào")
-    ap = choose(aps)
+    targets = choose(aps)
 
     if not args.yes:
+        if len(targets) == 1:
+            label = f"'{targets[0]['ssid']}' ({targets[0]['bssid']})"
+        else:
+            label = f"TẤT CẢ {len(targets)} mục tiêu đã chọn"
         try:
             answer = ui.ask(
-                f"[?] Xác nhận '{ap['ssid']}' ({ap['bssid']}) thuộc quyền sở hữu/uỷ quyền của bạn [y/N]: "
+                f"[?] Xác nhận {label} thuộc quyền sở hữu/uỷ quyền của bạn [y/N]: "
             ).strip().lower()
         except (EOFError, KeyboardInterrupt):
             sys.exit("\n[*] huỷ")
@@ -410,25 +449,45 @@ def main():
             sys.exit("[*] huỷ")
 
     protected = {name for name, kind in list_ifaces().items() if kind == "monitor"}
+    hashfiles, failed = [], []
     try:
-        hashfile, raws = capture(ap, iface, args.pmkid_minutes, args.hs_seconds, protected)
+        for index, ap in enumerate(targets, 1):
+            if len(targets) > 1:
+                ui.rule(f"mục tiêu {index}/{len(targets)}")
+            hashfile, raws = capture(ap, iface, args.pmkid_minutes, args.hs_seconds, protected, args.all_channels)
+            restore_iface(iface, protected)
+            if hashfile:
+                hashfiles.append(hashfile)
+                continue
+            failed.append(ap)
+            if raws:
+                names = ", ".join(path.name for path in raws)
+                ui.warn(f"file {names} không chứa hash của {ap['bssid']} — không crack để tránh đụng mạng khác.")
+                for raw in raws:
+                    ui.info(f"giữ lại để kiểm tra: {raw}")
+            else:
+                ui.warn("không bắt được PMKID/handshake. Gợi ý: đứng gần AP hơn, thử kênh khác, hoặc chờ client reconnect.")
     finally:
         restore_iface(iface, protected)
         restore_network(nm_was_active)
         return_ownership()
 
-    if not hashfile:
-        if raws:
-            names = ", ".join(path.name for path in raws)
-            ui.warn(f"file {names} không chứa hash của {ap['bssid']} — không crack để tránh đụng mạng khác.")
-            for raw in raws:
-                ui.info(f"giữ lại để kiểm tra: {raw}")
-        else:
-            ui.warn("không bắt được PMKID/handshake. Gợi ý: đứng gần AP hơn, thử kênh khác, hoặc chờ client reconnect.")
+    if len(targets) > 1:
+        ui.info(f"capture xong: {len(hashfiles)}/{len(targets)} mục tiêu có hash")
+        for ap in failed:
+            ui.warn(f"{ap['ssid']} ({ap['bssid']}): không có hash")
+
+    if not hashfiles:
         return
 
+    if len(hashfiles) == 1:
+        crackfile = hashfiles[0]
+    else:
+        crackfile = combine_hashes(hashfiles)
+        ui.info(f"gộp {len(hashfiles)} hash mục tiêu → {crackfile.name}")
+
     try:
-        crack(hashfile, args)
+        crack(crackfile, args)
     finally:
         return_ownership()
 

